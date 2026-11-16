@@ -1,0 +1,20 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY apps/alert-receiver ./apps/alert-receiver
+RUN npm run build:receiver
+RUN npm prune --omit=dev
+
+FROM node:22-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+RUN addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
+COPY --from=build --chown=sentinelops:sentinelops /app/package*.json ./
+COPY --from=build --chown=sentinelops:sentinelops /app/node_modules ./node_modules
+COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-receiver/dist ./apps/alert-receiver/dist
+USER sentinelops
+EXPOSE 8090
+CMD ["node", "apps/alert-receiver/dist/src/server.js"]

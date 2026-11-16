@@ -1,0 +1,25 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY apps/test-service/tsconfig.json ./apps/test-service/tsconfig.json
+COPY apps/alert-manager/backend ./apps/alert-manager/backend
+COPY apps/alert-manager/frontend ./apps/alert-manager/frontend
+RUN npm run build:backend && npm run build:frontend
+RUN npm prune --omit=dev
+
+FROM node:22-alpine AS runtime
+ENV NODE_ENV=production
+ENV STATIC_ROOT=/app/apps/alert-manager/frontend/dist
+WORKDIR /app
+RUN addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
+COPY --from=build --chown=sentinelops:sentinelops /app/package*.json ./
+COPY --from=build --chown=sentinelops:sentinelops /app/node_modules ./node_modules
+COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-manager/backend/dist ./apps/alert-manager/backend/dist
+COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-manager/frontend/dist ./apps/alert-manager/frontend/dist
+RUN mkdir -p /var/lib/sentinelops && chown sentinelops:sentinelops /var/lib/sentinelops
+USER sentinelops
+EXPOSE 8081
+CMD ["node", "apps/alert-manager/backend/dist/src/server.js"]

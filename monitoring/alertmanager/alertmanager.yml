@@ -1,0 +1,22 @@
+global:
+  resolve_timeout: 10s
+
+route:
+  group_by:
+    - alertname
+    - job
+    - service
+  group_wait: 5s
+  group_interval: 10s
+  repeat_interval: 1m
+  receiver: local-alert-receiver
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: local-alert-receiver
+
+receivers:
+  - name: local-alert-receiver
+    webhook_configs:
+        - url: http://alert-manager-api:8081/api/webhooks/alertmanager
+        send_resolved: true
