@@ -1,93 +1,256 @@
-# SentinelOps — four-container architecture
+# SentinelOops
 
-The root Compose stack runs exactly four SentinelOps containers:
+## Observe. Detect. Recover.
 
-1. `test-service`
-2. `prometheus`
-3. `grafana`
-4. `alert-manager`
+SentinelOops is a local-first infrastructure monitoring and incident-response project. It combines a Node.js test service, Prometheus metrics and alert rules, Grafana dashboards, a custom Alert Manager, and a restricted recovery controller into a reproducible Docker Compose workflow.
 
-The Alert Manager image contains the Fastify API, React/Vite build, SQLite database, Prometheus polling loop, durable SQLite job queue, notification worker, SMTP delivery, incident history, and recovery-state tracking.
+[![Node.js](https://img.shields.io/badge/Node.js-22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
+[![Prometheus](https://img.shields.io/badge/Prometheus-2.55-E6522C?logo=prometheus&logoColor=white)](https://prometheus.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-11-F46800?logo=grafana&logoColor=white)](https://grafana.com/)
+[![Docker Compose](https://img.shields.io/badge/Docker%20Compose-supported-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-## Start
+Repository: [github.com/jimmy007bond/SentinelOops](https://github.com/jimmy007bond/SentinelOops)
 
-Set the existing Grafana password in the root `.env` file:
+## Overview
 
-```dotenv
-GRAFANA_ADMIN_PASSWORD=choose-a-password
-```
+SentinelOops makes the complete failure loop visible in a small, reproducible environment:
 
-Then run from the SentinelOps root:
+1. The test service exposes health and Prometheus metrics.
+2. Prometheus scrapes the service every two seconds and evaluates alert rules.
+3. Alert Manager polls Prometheus, records firing and resolved incidents, and exposes a live dashboard.
+4. Optional SMTP notifications are queued and recorded in SQLite.
+5. Approved recovery runbooks can call a private, allowlisted recovery controller.
 
-```powershell
+The project is intended for local development, observability demonstrations, and engineering portfolio review. It is not presented as a production deployment blueprint.
+
+## Demo
+
+No checked-in video or screenshot assets were found in the repository. These are clearly labeled placeholders rather than fabricated media.
+
+- Demo video: Not included; add a real recording link here.
+- Dashboard screenshot: Not included; add an image under docs/assets when available.
+- Incident detection screenshot: Not included; add an image under docs/assets when available.
+- Recovery screenshot: Not included; add an image under docs/assets when available.
+
+## Key Features
+
+- Real service health monitoring through /health and Prometheus /metrics.
+- Two-second Prometheus scraping and evaluation intervals.
+- Grafana dashboard provisioned with availability, CPU, memory, request-rate, and latency panels.
+- Alert Manager incident polling with FIRING and RESOLVED lifecycle detection.
+- SQLite-backed incident, notification, job, and recovery execution state.
+- SMTP configuration through the dashboard, with encrypted saved settings and Nodemailer delivery.
+- Server-Sent Events plus polling for live dashboard updates.
+- Structured recovery runbooks with manual execution and optional automatic mode.
+- Private recovery controller restricted to the Compose test-service container and approved actions.
+- Recovery verification through the service health endpoint and persisted execution history.
+
+## Architecture
+
+~~~mermaid
+flowchart LR
+    B[Browser]
+    T[test-service<br/>Node.js / TypeScript]
+    P[Prometheus<br/>2s scrape + rules]
+    G[Grafana<br/>provisioned dashboard]
+    A[Alert Manager<br/>Fastify + React + SQLite]
+    R[Recovery Controller<br/>private internal API]
+    D[Docker Engine API]
+    S[SMTP server]
+    V1[(Prometheus volume)]
+    V2[(Grafana volume)]
+    V3[(SentinelOps SQLite volume)]
+
+    T -- /metrics --> P
+    T -- /health --> A
+    P -- query API --> A
+    P -- PromQL --> G
+    A -- SSE / polling --> B
+    B -- dashboard and settings --> A
+    A -- queued email --> S
+    A -- restricted recovery request --> R
+    R -- start/restart/status --> D
+    R -- health verification --> T
+    P --- V1
+    G --- V2
+    A --- V3
+~~~
+
+The active root Compose stack contains five services: test-service, prometheus, grafana, alert-manager, and recovery-controller. The recovery controller has no host port and is reachable only from the Compose network. monitoring/alertmanager/alertmanager.yml and apps/alert-receiver are retained legacy material and are not active services in the current root Compose file.
+
+## Technology Stack
+
+| Area | Verified technologies |
+| --- | --- |
+| Frontend | React, TypeScript, Vite |
+| Backend | Node.js, TypeScript, Fastify |
+| Persistence | SQLite, better-sqlite3, WAL mode |
+| Email | Nodemailer, configurable SMTP |
+| Observability | Prometheus, PromQL, Grafana |
+| Recovery | Dedicated Node.js controller, Docker Engine API |
+| Infrastructure | Docker, Docker Compose, named volumes |
+| Validation | Node test runner, TypeScript builds, promtool |
+
+## Getting Started
+
+### Prerequisites
+
+- Docker Desktop with Docker Compose v2.
+- Node.js 22 and npm for local repository checks.
+- An SMTP account or app password if email notifications are required.
+
+### Clone and configure
+
+~~~powershell
+git clone https://github.com/jimmy007bond/SentinelOops.git
+cd SentinelOops
+Copy-Item .env.example .env
+~~~
+
+Review .env before starting. Use development-only values and never commit the file:
+
+~~~dotenv
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=change-this-locally
+RECOVERY_CONTROLLER_TOKEN=replace-with-a-long-random-token
+SENTINELOPS_AUTH_ENABLED=false
+SENTINELOPS_ADMIN_TOKEN=change-this-locally
+SETTINGS_ENCRYPTION_KEY=replace-with-a-long-random-key
+EMAIL_ENABLED=false
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USERNAME=sender@example.com
+SMTP_PASSWORD=app-password
+SMTP_FROM=sender@example.com
+SMTP_RECIPIENTS=operator@example.com
+~~~
+
+SMTP_PASSWORD is only a placeholder. Do not paste a real credential into source control or logs.
+
+### Start the stack
+
+~~~powershell
 docker compose up -d --build --remove-orphans
 docker compose ps
-```
+~~~
 
-URLs:
+| Component | URL |
+| --- | --- |
+| Test service | [http://localhost:8080](http://localhost:8080) |
+| Prometheus | [http://localhost:9090](http://localhost:9090) |
+| Grafana | [http://localhost:3000](http://localhost:3000) |
+| Alert Manager | [http://localhost:3005](http://localhost:3005) |
 
-- Alert Manager: http://localhost:3005
-- Test service: http://localhost:8080
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
+The recovery controller listens only on the internal Docker network at port 8090; it is not published to the host.
 
-SQLite and queued jobs persist in the `sentinelops_data` volume. Prometheus and Grafana retain their existing volumes.
+### Check health
 
-## Detection design
+~~~powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:3005/health
+Invoke-RestMethod http://localhost:3005/ready
+docker compose config --quiet
+~~~
 
-Prometheus v2.55.1 does not provide a native arbitrary webhook receiver for alert rules. Alertmanager is therefore intentionally removed from this four-container design. Alert Manager polls Prometheus's supported `/api/v1/alerts` endpoint every two seconds.
+Open Grafana and select the provisioned SentinelOops - Service Monitoring dashboard. Prometheus should show the sentinelops-test-service target as UP at http://localhost:9090/targets.
 
-- Prometheus evaluates rules every 2 seconds.
-- Alert Manager treats firing Prometheus alerts as FIRING incidents.
-- A previously firing fingerprint missing from the next active-alert response becomes RESOLVED.
-- Notification jobs are persisted in SQLite before SMTP processing.
-- Jobs retry with bounded backoff and become failed after three attempts.
-- Repeated fingerprints update one incident instead of creating duplicates.
+### Stop the stack
 
-## SMTP
+~~~powershell
+docker compose down
+~~~
 
-Open http://localhost:3005 and select Email settings. Configure a real SMTP provider. For Gmail use:
+Do not add --volumes unless you intentionally want to delete Prometheus, Grafana, and SQLite data volumes.
 
-- Host: `smtp.gmail.com`
-- Port: `465`
-- SSL/TLS: enabled
-- Username: your Gmail address
-- Password: a Google App Password, not your normal password
-- Sender and one or more recipients
+## Incident Recovery Walkthrough
 
-Credentials are encrypted using `SETTINGS_ENCRYPTION_KEY`, are never returned to the browser, and are not logged. Enable notifications, save, then use Send test email.
+1. Start the stack and open Alert Manager at http://localhost:3005.
+2. Configure SMTP settings in the dashboard if notifications are needed.
+3. In Recovery, create an enabled runbook targeting test-service. Choose START_CONTAINER for a stopped service or RESTART_CONTAINER for a running service, configure /health, and keep execution manual.
+4. Simulate an outage without deleting data:
 
-## Outage demonstration
-
-```powershell
+~~~powershell
 docker compose stop test-service
-```
+~~~
 
-Wait approximately 15–25 seconds. The ServiceDown rule will become active and the Alert Manager dashboard will show one active critical incident. Configure SMTP first if you want the FIRING email.
+5. After the alert rule pending period, Alert Manager records ServiceDown as FIRING and the dashboard updates through its live stream and polling path.
+6. Open the incident or Recovery panel, approve the displayed action, and execute the runbook.
+7. The private recovery controller validates the Compose project, service label, image, action, and token before using the Docker Engine API. It does not execute a user-provided shell command.
+8. Alert Manager checks the service health endpoint twice before recording SUCCESS.
+9. Verify the result:
 
-Recover:
+~~~powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:3005/api/recovery/executions
+docker compose ps
+~~~
 
-```powershell
-docker compose start test-service
-```
+The recovery socket is mounted only into recovery-controller, not into the public-facing Alert Manager process. Docker socket access is highly privileged and should be limited to local development.
 
-After another polling cycle, the incident becomes RESOLVED and the recovery email is queued.
+## Project Structure
+
+~~~text
+SentinelOps/
+├── apps/
+│   ├── alert-manager/
+│   │   ├── backend/src/       # Fastify API, polling, jobs, SQLite, recovery API
+│   │   ├── frontend/src/      # React dashboard
+│   │   └── backend/test/      # Backend tests
+│   ├── alert-receiver/        # Earlier standalone receiver; inactive in root Compose
+│   ├── recovery-controller/   # Restricted Docker recovery API
+│   └── test-service/          # Monitored Node.js service
+├── monitoring/
+│   ├── grafana/               # Datasource and dashboard provisioning
+│   ├── prometheus/            # Prometheus config and alert rules
+│   └── alertmanager/          # Earlier unused Alertmanager configuration
+├── alert-manager/             # Legacy/planned modular app folders
+├── compose.yaml
+├── Dockerfile
+├── .env.example
+├── package.json
+└── README.md
+~~~
+
+## Security Considerations
+
+- Compose bindings are localhost-oriented for local development, but should not be treated as an internet-facing deployment.
+- Keep .env out of version control. SMTP passwords, Grafana credentials, controller tokens, and encryption keys are secrets.
+- SETTINGS_ENCRYPTION_KEY protects saved SMTP settings at rest; protect the key itself through the environment or a secret manager.
+- Keep management authentication enabled and replace development tokens before sharing the application.
+- The recovery controller validates the exact Compose project and service identity and supports a small approved action set. It does not provide arbitrary command execution.
+- Docker Engine socket access can provide broad control over the Docker host. The socket is isolated to the controller, but the controller remains a privileged trust boundary.
+- Avoid printing .env, resolved Compose configuration, or SMTP settings in support logs.
+
+## Roadmap
+
+The following are future improvements, not current dependencies or implemented guarantees:
+
+- Hardened external control boundary with a separately deployable policy-enforcing service.
+- Stronger user authentication, sessions, roles, and audit views.
+- PostgreSQL-backed persistence for multi-instance deployments.
+- More detailed incident timelines and notification analytics.
+- Browser-level end-to-end coverage and checked-in demonstration media.
+- Deployment guidance for additional environments, including Kubernetes only if a future deployment requires it.
 
 ## Validation
 
-```powershell
-docker compose config --services
-docker compose config --quiet
+~~~powershell
 npm test
+npm run build:frontend
+docker compose config --quiet
 docker compose exec -T prometheus promtool check config /etc/prometheus/prometheus.yml
 docker compose exec -T prometheus promtool check rules /etc/prometheus/alert-rules.yml
-```
+~~~
 
-The old Kafka, PostgreSQL, Alertmanager, legacy receiver, and separate frontend containers are no longer started by the root Compose file. Their prior named volumes are not deleted automatically; they can be removed manually later only if you no longer need their historical data. Kafka and PostgreSQL are not used in the four-container architecture.
-## Browser refresh behavior
+The repository test command covers the existing Node.js and TypeScript test suites. The frontend build and Compose/Prometheus checks are listed separately so failures are easier to identify.
 
-Prometheus's 2-second `scrape_interval` controls collection on the server; it does not refresh the Prometheus expression browser automatically. The native Prometheus UI is intended for manually executing queries. Keep the Prometheus tab open for inspection, but use Grafana for an automatically refreshing dashboard. The supported native alternative is to re-run the query (or use a browser extension), because this project does not replace or modify Prometheus's built-in UI.
+## Author
 
-Grafana is provisioned with a 2-second minimum refresh interval, a dashboard default refresh of `2s`, and `2s` in the dashboard refresh menu. Open `http://localhost:3000`, select the `SentinelOps — Service Monitoring` dashboard, and leave the refresh control enabled at `2s`. Grafana will query Prometheus automatically while the tab is active. Browsers may throttle timers and network activity in background/inactive tabs; this is a browser safety behavior and cannot be reliably disabled by the application. When the tab becomes active again, Grafana resumes its refresh cycle.
+**Nizamuddin Ali Ahmed**
 
-The Alert Manager UI at `http://localhost:3005` uses an in-process SSE stream at `/api/events/stream` for immediate incident and notification updates, with a 10-second snapshot fallback after reconnects.
+- Portfolio: [nizamuddin.online](https://nizamuddin.online)
+- GitHub: [NonCoderF](https://github.com/NonCoderF)
+- LinkedIn: [nizamuddin-ahmed-827024428](https://www.linkedin.com/in/nizamuddin-ahmed-827024428/)
