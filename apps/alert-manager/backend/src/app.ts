@@ -12,6 +12,94 @@ interface AlertmanagerPayload {
   alerts: IncomingAlert[];
 }
 
+type PromValue = number | null;
+type PromSeries = { metric: Record<string, string>; value?: [number, string] };
+
+async function prometheusJson<T>(path: string): Promise<T | null> {
+  try {
+    const response = await fetch(`${process.env.PROMETHEUS_URL ?? 'http://prometheus:9090'}${path}`);
+    if (!response.ok) return null;
+    const body = await response.json() as { status?: string; data?: T };
+    return body.status === 'success' ? body.data ?? null : null;
+  } catch { return null; }
+}
+
+async function endpointStatus(url: string): Promise<'connected' | 'unavailable'> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    return response.ok ? 'connected' : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+function instantValue(data: { result?: Array<{ value?: [number, string] }> } | null, labels?: Record<string, string>): PromValue {
+  const row = data?.result?.find((entry) => !labels || Object.entries(labels).every(([key, value]) => entry.value && value === String(value))) ?? data?.result?.[0];
+  const value = row?.value?.[1];
+  const number = value === undefined ? null : Number(value);
+  return number !== undefined && Number.isFinite(number) ? number : null;
+}
+
+async function dashboardData(range: string, db: AlertDatabase) {
+  const allowed = new Set(['5m', '15m', '1h', '6h', '24h']);
+  const window = allowed.has(range) ? range : '15m';
+  const q = (expr: string) => prometheusJson<{ result?: Array<{ metric: Record<string, string>; value?: [number, string] }> }>(`/api/v1/query?query=${encodeURIComponent(expr)}`);
+  const rq = (expr: string) => prometheusJson<{ result?: Array<{ metric: Record<string, string>; values?: [number, string][] }> }>(`/api/v1/query_range?query=${encodeURIComponent(expr)}&start=${(Date.now() / 1000 - ({ '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '24h': 86400 } as Record<string, number>)[window]).toFixed(0)}&end=${(Date.now() / 1000).toFixed(0)}&step=${window === '24h' ? 900 : window === '6h' ? 300 : 30}`);
+  const [up, cpu, memory, requestRate, errorRate, latency, availability, rangeCpu, rangeMemory, rangeRequests, rangeLatency, rangeErrors, rangeAvailability, connections, settings] = await Promise.all([
+    q('up'), q('sum by (job) (rate(sentinelops_process_cpu_user_seconds_total[30s]) + rate(sentinelops_process_cpu_system_seconds_total[30s]))'),
+    q('sentinelops_process_resident_memory_bytes'), q('sum by (job) (rate(sentinelops_http_requests_total[30s]))'),
+    q('sum by (job) (rate(sentinelops_http_requests_total{status_code=~"5.."}[30s]))'),
+    q('histogram_quantile(0.95, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))'),
+    q('avg by (job) (avg_over_time(up[15m]))'),
+    rq('sum by (job) (rate(sentinelops_process_cpu_user_seconds_total[30s]) + rate(sentinelops_process_cpu_system_seconds_total[30s]))'),
+    rq('sentinelops_process_resident_memory_bytes'), rq('sum by (job) (rate(sentinelops_http_requests_total[30s]))'),
+    rq('histogram_quantile(0.95, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))'),
+    rq('sum by (job) (rate(sentinelops_http_requests_total{status_code=~"5.."}[30s]))'), rq('avg by (job) (avg_over_time(up[15m]))'),
+    Promise.all([
+      `${process.env.PROMETHEUS_URL ?? 'http://prometheus:9090'}/-/ready`,
+      `${process.env.GRAFANA_URL ?? 'http://grafana:3000'}/api/health`,
+      `${process.env.RECOVERY_CONTROLLER_URL ?? 'http://recovery-controller:8090'}/health`
+    ].map(endpointStatus)),
+    Promise.resolve(db.getSettings())
+  ]);
+  const [latencyP50, latencyP99, rangeLatencyP50, rangeLatencyP99] = await Promise.all([
+    q('histogram_quantile(0.50, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))'),
+    q('histogram_quantile(0.99, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))'),
+    rq('histogram_quantile(0.50, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))'),
+    rq('histogram_quantile(0.99, sum by (job, le) (rate(sentinelops_http_request_duration_seconds_bucket[30s])))')
+  ]);
+  // Load-test metrics are an auxiliary observability target, not a monitored application service.
+  const upRows = (up?.result ?? []).filter((row) => row.metric.job !== 'sentinelops-load-test');
+  const alerts = db.listAlerts({});
+  const metric = (rows: typeof upRows, job: string) => instantValue({ result: rows.filter((row) => row.metric.job === job) });
+  const series = (data: { result?: Array<{ metric: Record<string, string>; values?: [number, string][] }> } | null) => (data?.result ?? []).map((row) => ({ job: row.metric.job ?? 'unknown', points: (row.values ?? []).map(([time, value]) => [time, Number(value)]).filter((point) => Number.isFinite(point[1])) }));
+  const services = upRows.map((row) => { const job = row.metric.job ?? 'unknown'; const serviceName = job === 'sentinelops-test-service' ? 'test-service' : job; const lastFailure = alerts.filter((alert) => alert.labels.service === serviceName).sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt))[0]; return { name: serviceName, job, status: row.value?.[1] === '1' ? 'UP' : 'DOWN', cpu: metric(cpu?.result ?? [], job), memory: metric(memory?.result ?? [], job), requests: metric(requestRate?.result ?? [], job), errors: metric(errorRate?.result ?? [], job), latency: metric(latency?.result ?? [], job), availability: metric(availability?.result ?? [], job), checkedAt: row.value?.[0] ? new Date(row.value[0] * 1000).toISOString() : null, lastFailure: lastFailure?.firstSeenAt ?? null }; });
+  const deliveries = db.listEmails();
+  const executions = db.recoveryExecutions();
+  const active = alerts.filter((alert) => alert.status === 'firing').length;
+  const success = executions.filter((run) => run.status === 'SUCCESS');
+  const finished = executions.filter((run) => ['SUCCESS', 'FAILED', 'TIMED_OUT'].includes(String(run.status)));
+  const durations = finished.map((run) => run.completed_at && run.started_at ? new Date(String(run.completed_at)).getTime() - new Date(String(run.started_at)).getTime() : 0).filter((value) => value > 0);
+  const journal = db.dashboardEvents({ limit: 200 });
+  const activity = journal.map((event) => { let metadata: Record<string, unknown> = {}; try { metadata = JSON.parse(String(event.metadata_json)) as Record<string, unknown>; } catch { /* old/corrupt metadata is displayed without detail */ } return { id: String(event.event_id), type: String(event.event_type), label: `${String(event.event_type).toUpperCase()} · ${String(event.status ?? 'RECORDED')}`, detail: `${String(event.service_id ?? 'unknown service')} · ${String(metadata.alertName ?? metadata.actionType ?? metadata.subject ?? '')}`.trim(), at: String(event.occurred_at), incidentId: event.incident_id, severity: event.severity, status: event.status, metadata }; });
+  const resolved = alerts.filter((alert) => alert.status === 'resolved' && alert.resolvedAt);
+  const incidentDurations = resolved.map((alert) => new Date(alert.resolvedAt as string).getTime() - new Date(alert.firstSeenAt).getTime()).filter((value) => value >= 0);
+  const mttd = null;
+  const mttr = incidentDurations.length ? incidentDurations.reduce((sum, value) => sum + value, 0) / incidentDurations.length : null;
+  const healthy = services.filter((service) => service.status === 'UP').length;
+  const unhealthy = services.filter((service) => service.status === 'DOWN').length;
+  const sent = deliveries.filter((delivery) => delivery.status === 'sent').length;
+  const failedEmails = deliveries.filter((delivery) => delivery.status === 'failed').length;
+  const notificationAttempts = sent + failedEmails;
+  const averageRequests = services.length ? services.reduce((sum, service) => sum + (service.requests ?? 0), 0) : null;
+  const averageLatency = services.length ? services.reduce((sum, service) => sum + (service.latency ?? 0), 0) / services.length : null;
+  const lastPrometheusScrape = services.map((service) => service.checkedAt).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+  const monitoringStatus = !services.length || connections?.[0] !== 'connected' ? 'UNKNOWN' : unhealthy > 0 || active > 0 ? 'CRITICAL' : connections?.some((value) => value !== 'connected') ? 'DEGRADED' : 'HEALTHY';
+  const runbooks = db.listRunbooks();
+  const latestRecovery = success.find((run) => run.completed_at) ?? null;
+  return { generatedAt: new Date().toISOString(), range: window, infrastructureStatus: monitoringStatus, lastPrometheusScrape, monitoringInterval: '2s', services, charts: { cpu: series(rangeCpu), memory: series(rangeMemory), requests: series(rangeRequests), latency: series(rangeLatency), latencyP50: series(rangeLatencyP50), latencyP99: series(rangeLatencyP99), errors: series(rangeErrors), availability: series(rangeAvailability) }, connections: { prometheus: connections?.[0], grafana: connections?.[1], recoveryController: connections?.[2], sentinelops: 'connected' }, summary: { total: services.length, healthy, unhealthy, active, critical: alerts.filter((alert) => alert.status === 'firing' && alert.labels.severity === 'critical').length, warning: alerts.filter((alert) => alert.status === 'firing' && alert.labels.severity === 'warning').length, resolved: resolved.length, recoveries: success.length, failedRecoveries: executions.filter((run) => ['FAILED', 'TIMED_OUT'].includes(String(run.status))).length, availability: services.length ? services.reduce((sum, service) => sum + (service.availability ?? 0), 0) / services.length : null, currentRequestsPerSecond: averageRequests, averageResponseLatencySeconds: averageLatency, recoveryAttempts: executions.length, averageRecoveryDurationMs: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null, runningRecoveries: executions.filter((run) => ['RUNNING', 'PENDING'].includes(String(run.status))).length, availableRunbooks: runbooks.filter((runbook) => runbook.enabled).length, totalIncidents: alerts.length, resolvedIncidents: resolved.length, unresolvedIncidents: active, averageIncidentDurationMs: incidentDurations.length ? incidentDurations.reduce((sum, value) => sum + value, 0) / incidentDurations.length : null, recoverySuccessRate: executions.length ? success.length / executions.length : null, notificationSuccessRate: notificationAttempts ? sent / notificationAttempts : null, mttdMs: mttd, mttrMs: mttr }, alerts, deliveries: deliveries.slice(0, 12), executions: executions.slice(0, 12), latestRecovery, email: { enabled: settings.enabled, smtpConfigured: Boolean(settings.smtpHost && settings.fromEmail), lastAttempt: deliveries[0]?.createdAt ?? null, sent, failed: failedEmails, lastError: deliveries.find((delivery) => delivery.status === 'failed')?.error ?? null }, activity };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -244,6 +332,16 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
       warning: alerts.filter((alert) => alert.status === 'firing' && alert.labels.severity === 'warning').length,
       resolved: alerts.filter((alert) => alert.status === 'resolved').length
     };
+  });
+
+  app.get('/api/dashboard', { preHandler: requireAdmin }, async (request) => {
+    const range = String((request.query as { range?: string }).range ?? '15m');
+    return dashboardData(range, db);
+  });
+
+  app.get('/api/activity', { preHandler: requireAdmin }, async (request) => {
+    const query = request.query as { service?: string; severity?: string; type?: string; since?: string; limit?: string; offset?: string };
+    return { events: db.dashboardEvents({ service: query.service, severity: query.severity, type: query.type, since: query.since, limit: Number(query.limit ?? 100), offset: Number(query.offset ?? 0) }) };
   });
 
   app.get('/api/connections', { preHandler: requireAdmin }, async () => {

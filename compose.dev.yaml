@@ -1,0 +1,20 @@
+services:
+  alert-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.alert-manager-dev
+    image: sentinelops/alert-manager:dev
+    environment:
+      NODE_ENV: development
+      FRONTEND_NO_CACHE: "true"
+      VITE_USE_POLLING: "true"
+      VITE_HMR_HOST: localhost
+      VITE_HMR_PORT: "3005"
+      VITE_API_TARGET: http://127.0.0.1:8081
+    command: ["sh", "-c", "./node_modules/.bin/tsx apps/alert-manager/backend/src/server.ts & exec npm run dev:frontend -- --host 0.0.0.0"]
+    volumes:
+      - ./apps/alert-manager/frontend:/app/apps/alert-manager/frontend
+      - ./apps/alert-manager/backend:/app/apps/alert-manager/backend
+      - sentinelops_data:/var/lib/sentinelops
+    ports: !override
+      - "127.0.0.1:3005:3005"

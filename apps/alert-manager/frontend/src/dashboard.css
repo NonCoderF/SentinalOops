@@ -1,0 +1,115 @@
+/* Dashboard audit layer: keeps the existing components and data contracts, while
+   giving the command center a denser, clearer operational hierarchy. */
+
+.content{width:min(1720px,100%);padding:28px clamp(20px,3vw,44px) 48px;min-width:0}
+.topbar{margin-bottom:20px;align-items:center}
+.topbar h1{font-size:clamp(23px,2.4vw,30px)}
+.subtitle{max-width:680px;color:var(--mc-muted);line-height:1.45}
+
+.status-banner{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(0,2fr);align-items:center;gap:18px;min-height:0;margin-bottom:12px;padding:14px 16px}
+.status-facts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px 14px}
+.status-facts span{min-width:0;color:var(--mc-muted);font-size:10px;line-height:1.35}
+.status-facts b{display:block;margin-bottom:2px;color:var(--mc-text);font:600 12px "JetBrains Mono",monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.section-kicker,.section-title,.toolbar{max-width:none}
+.section-kicker{display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px}
+.stat-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.stat-card{min-height:88px;padding:13px 14px;border-radius:10px;box-shadow:none;background:var(--mc-surface)}
+.stat-card strong{margin-top:4px;font-size:22px}
+.stat-card small{display:block;margin-top:3px;color:var(--mc-muted);font-size:10px;line-height:1.3}
+.stat-card .label{font-size:10px}
+.section-title{margin:18px 0 8px}
+.panel{padding:18px;margin-bottom:12px;box-shadow:none}
+.panel-head{margin-bottom:12px}
+.panel h2{font-size:14px}
+
+.service-panel{overflow-x:auto}
+.service-table{grid-template-columns:minmax(150px,1.55fr) minmax(80px,.65fr) minmax(145px,1fr) minmax(145px,1fr) minmax(100px,.8fr) minmax(110px,.85fr) minmax(120px,1fr);gap:12px;min-width:850px}
+.service-table:not(.head){min-height:64px;padding:11px 8px}
+.service-table.head{padding:0 8px 8px}
+.service-name small{display:block;margin-top:4px;color:var(--mc-dim);font-size:10px}
+.service-table>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+.incident-list-panel,.timeline,.reliability{margin-bottom:12px}
+.empty{min-height:62px;padding:14px;text-align:center;line-height:1.45}
+.alert-row{padding:11px 4px}
+.timeline-list{max-height:320px;overflow:auto}
+.timeline-event{display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--mc-border-soft)}
+.timeline-event>div{min-width:0}.timeline-event strong,.timeline-event span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.timeline-event strong{font-size:11px}.timeline-event span,.timeline-event time{color:var(--mc-muted);font-size:10px}.timeline-event time{white-space:nowrap}
+
+.recovery-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:12px 0}
+.recovery-kpis>div{padding:10px;background:#101a29}
+.recovery-kpis b{font-size:18px}
+.recovery-kpis span{font-size:10px}
+
+.toolbar{display:flex;justify-content:space-between;align-items:end;gap:16px;margin:20px 0 10px}
+.toolbar h2{margin:0;font-size:16px}
+.range-picker{flex:0 0 auto}
+.chart-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.chart{min-width:0;min-height:0;padding:15px}
+.chart .panel-head{align-items:center;margin-bottom:6px}
+.chart h3{margin:0;font-size:13px}
+.chart-container{position:relative;width:100%;height:250px;min-width:0;min-height:250px;margin-top:5px}
+.chart svg{display:block;width:100%;height:100%;min-width:0;min-height:0;margin:0;overflow:visible}
+.chart-axis-label{fill:var(--mc-muted);font:8px "JetBrains Mono",monospace}
+.chart-axis-label{
+  /* The custom chart uses a 100x100 SVG viewBox. These are SVG user units,
+     not CSS pixels; 8 units was scaling to roughly 20px on a 250px chart. */
+  fill:#8FA6C7;
+  font-family:Inter,ui-sans-serif,system-ui,sans-serif;
+  font-size:2.8px;
+  font-weight:400;
+  letter-spacing:normal;
+  line-height:normal;
+  transform:scaleY(1.6);
+  transform-box:fill-box;
+  transform-origin:center;
+}
+.chart svg text{dominant-baseline:auto;paint-order:stroke;stroke:none}
+.chart-container{padding-bottom:2px}
+.gridline{stroke:var(--mc-border);stroke-width:.35;fill:none}
+.chart-foot{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;padding-top:10px;min-height:43px}
+.chart-foot span:last-child{text-align:right}
+
+.two-col{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.two-col>.panel{margin:0}
+.email-status{margin:12px 0;gap:8px}
+.email-status>div{padding:10px}
+.email-status strong{font-size:12px}
+.link-button{margin-top:4px}
+
+.topology-routes{gap:10px;margin-top:12px}
+.topology-route{padding:10px}
+.topology-route-flow{gap:8px}
+.topology-card{padding:10px;gap:8px}
+.topology-connector{flex-basis:62px}
+
+@media(max-width:1200px){
+  .status-banner{grid-template-columns:1fr}
+  .status-facts{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:900px){
+  .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .chart-grid{grid-template-columns:minmax(0,1fr)}
+  .chart-container{height:250px;min-height:250px}
+  .two-col{grid-template-columns:minmax(0,1fr)}
+  .topology-route-flow{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px){
+  .content{padding:18px 14px 32px}
+  .status-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .toolbar{display:block}
+  .range-picker{margin-top:10px;max-width:100%;overflow-x:auto}
+  .stat-card{min-height:82px;padding:11px}
+  .stat-card strong{font-size:20px}
+  .chart-container{height:230px;min-height:230px}
+  .timeline-event{grid-template-columns:8px minmax(0,1fr) auto}
+  .timeline-event time{grid-column:2}
+  .timeline-event .badge{grid-column:3;grid-row:1 / span 2}
+}
+@media(max-width:430px){
+  .stat-grid{grid-template-columns:1fr 1fr}
+  .status-primary{min-width:0}
+  .status-facts{font-size:9px}
+  .recovery-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .chart-container{height:220px;min-height:220px}
+}

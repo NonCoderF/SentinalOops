@@ -13,6 +13,8 @@
     "build:backend": "tsc -p apps/alert-manager/backend/tsconfig.json",
     "build:recovery-controller": "tsc -p apps/recovery-controller/tsconfig.json",
     "build:frontend": "vite build --config apps/alert-manager/frontend/vite.config.ts",
+    "dev:frontend": "vite --config apps/alert-manager/frontend/vite.config.ts",
+    "loadtest": "tsx load-testing/src/cli.ts",
     "start": "node apps/test-service/dist/src/server.js",
     "dev": "tsx apps/test-service/src/server.ts",
     "test": "npm run build && npm run build:receiver && npm run build:backend && node --test apps/test-service/dist/test/health.test.js apps/alert-receiver/dist/test/alerts.test.js apps/alert-manager/backend/dist/test/*.test.js"

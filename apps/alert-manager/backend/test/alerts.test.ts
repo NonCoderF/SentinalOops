@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { buildAlertManagerApp } from '../src/app.js';
 import { AlertDatabase } from '../src/db.js';
 import { formatAlertEmail, sendAlertEmail } from '../src/email.js';
+import { EventHub } from '../src/events.js';
 
 const alert = {
   status: 'firing',
@@ -69,5 +70,15 @@ describe('SentinelOps Alert Manager', () => {
     const result = await sendAlertEmail({ ...alert, status: 'firing', firstSeenAt: alert.startsAt, lastSeenAt: alert.startsAt }, 'firing', settings, undefined, (delivery) => db.recordEmail(delivery), (() => ({ sendMail: async () => { attempts += 1; throw new Error('connection failed'); } })) as never);
     assert.equal(result?.status, 'failed');
     assert.equal(attempts, 3);
+  });
+
+  it('journals lifecycle events once and supports indexed filters', () => {
+    const hub = new EventHub((event) => db.recordDashboardEvent(event));
+    const event = { fingerprint: 'fingerprint-1', service: 'test-service', severity: 'critical', status: 'FIRING' };
+    hub.publish('incident', event);
+    hub.publish('incident', event);
+    const rows = db.dashboardEvents({ service: 'test-service', severity: 'critical', type: 'incident' });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].service_id, 'test-service');
   });
 });

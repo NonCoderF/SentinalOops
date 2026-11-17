@@ -11,3 +11,11 @@ scrape_configs:
     static_configs:
       - targets:
           - test-service:8080
+
+  # The load-testing CLI is launched on the host, not as a Compose service.
+  # It is intentionally absent until the CLI is running.
+  - job_name: sentinelops-load-test
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:9464

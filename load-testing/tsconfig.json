@@ -1,0 +1,8 @@
+{
+  "extends": "../apps/test-service/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/load-testing",
+    "rootDir": ".."
+  },
+  "include": ["src/**/*.ts"]
+}

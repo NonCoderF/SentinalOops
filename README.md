@@ -93,6 +93,20 @@ The active root Compose stack contains five services: test-service, prometheus, 
 | Infrastructure | Docker, Docker Compose, named volumes |
 | Validation | Node test runner, TypeScript builds, promtool |
 
+### Stack Summary
+
+- Frontend: React, TypeScript, and Vite.
+- Backend: Node.js, TypeScript, and Fastify.
+- Persistence: SQLite with better-sqlite3 and WAL mode.
+- Email: Nodemailer with configurable SMTP delivery.
+- Monitoring: Prometheus and PromQL.
+- Dashboards: Grafana.
+- Recovery: Node.js recovery controller using the Docker Engine API.
+- Infrastructure: Docker, Docker Compose, and persistent named volumes.
+- Validation: Node.js test runner, TypeScript builds, and Prometheus promtool.
+
+The current active Compose stack does not require PostgreSQL, Kafka, Kubernetes, or an active Alertmanager container.
+
 ## Getting Started
 
 ### Prerequisites
@@ -190,6 +204,21 @@ docker compose ps
 
 The recovery socket is mounted only into recovery-controller, not into the public-facing Alert Manager process. Docker socket access is highly privileged and should be limited to local development.
 
+## Load Testing
+
+The repository includes a manually launched, localhost-only load-testing CLI under load-testing/. It targets the implemented test-service route at http://localhost:8080/ and never starts automatically. It supports smoke, benchmark, stress, billion, stop, and report commands with bounded virtual users, request rate, timeouts, failure limits, latency limits, duration limits, emergency stop, and large-test confirmation.
+
+```powershell
+npm run loadtest -- smoke
+npm run loadtest -- benchmark --vus=20 --rate=250
+npm run loadtest -- stop
+npm run loadtest -- report
+```
+
+The billion command is available for a deliberately approved local experiment only; it is not run during setup or validation. Tests over one million requests require typing RUN or passing --yes. Reports are generated as JSON and Markdown under load-testing/reports/ and are ignored by Git.
+
+While a test is running, aggregate metrics are exposed at http://localhost:9464/metrics and scraped by Prometheus. The provisioned SentinelOops - Load Testing Grafana dashboard shows request rate, total requests, error rate, latency percentiles, active virtual users, load-generator CPU and memory, response-byte throughput, and progress. Metrics use bounded labels and do not create one database record per request.
+
 ## Project Structure
 
 ~~~text
@@ -207,6 +236,7 @@ SentinelOps/
 │   ├── prometheus/            # Prometheus config and alert rules
 │   └── alertmanager/          # Earlier unused Alertmanager configuration
 ├── alert-manager/             # Legacy/planned modular app folders
+├── load-testing/              # Manual localhost-only load generator and reports
 ├── compose.yaml
 ├── Dockerfile
 ├── .env.example

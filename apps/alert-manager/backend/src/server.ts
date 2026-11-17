@@ -13,7 +13,7 @@ const webhookToken = process.env.ALERTMANAGER_WEBHOOK_TOKEN ?? '';
 const encryptionKey = process.env.SETTINGS_ENCRYPTION_KEY ?? 'local-development-encryption-key';
 
 const db = new AlertDatabase(databasePath, encryptionKey);
-const events = new EventHub();
+const events = new EventHub((event) => db.recordDashboardEvent(event));
 const envSmtpHost = process.env.SMTP_HOST?.trim();
 if (envSmtpHost) {
   const current = db.getSettings();
@@ -33,7 +33,21 @@ if (envSmtpHost) {
 const app = buildAlertManagerApp({ db, adminToken, webhookToken, dashboardUrl: process.env.DASHBOARD_URL, authEnabled: process.env.AUTH_ENABLED === 'true', events });
 const stopPolling = startPrometheusPolling(db, process.env.DASHBOARD_URL, events);
 const stopNotifications = startNotificationWorker(db, process.env.DASHBOARD_URL, events);
-await app.register(fastifyStatic, { root: process.env.STATIC_ROOT ?? path.resolve('apps/alert-manager/frontend/dist'), prefix: '/' });
+const frontendNoCache = process.env.FRONTEND_NO_CACHE === 'true';
+await app.register(fastifyStatic, {
+  root: process.env.STATIC_ROOT ?? path.resolve('apps/alert-manager/frontend/dist'),
+  prefix: '/',
+  setHeaders: (response, filePath) => {
+    const isHtml = path.basename(filePath).toLowerCase() === 'index.html';
+    if (frontendNoCache) {
+      response.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      response.header('Pragma', 'no-cache');
+      response.header('Expires', '0');
+    } else if (isHtml) {
+      response.header('Cache-Control', 'no-cache, must-revalidate, max-age=0');
+    }
+  }
+});
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutdown requested');

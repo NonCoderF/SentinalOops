@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { AlertEvent } from './streaming.js';
+import type { LiveEvent } from './events.js';
 
 export type AlertStatus = 'firing' | 'resolved';
 
@@ -205,6 +206,21 @@ export class AlertDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT, runbook_id INTEGER NOT NULL, service TEXT NOT NULL, action_type TEXT NOT NULL,
         mode TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', output TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, completed_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS dashboard_events (
+        event_id TEXT PRIMARY KEY,
+        incident_id TEXT,
+        service_id TEXT,
+        event_type TEXT NOT NULL,
+        severity TEXT,
+        status TEXT,
+        occurred_at TEXT NOT NULL,
+        related_record_type TEXT,
+        related_record_id TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_dashboard_events_time ON dashboard_events(occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dashboard_events_incident ON dashboard_events(incident_id, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dashboard_events_service ON dashboard_events(service_id, occurred_at DESC);
       INSERT OR IGNORE INTO notification_settings (id) VALUES (1);
     `);
     const columns = this.db.prepare('PRAGMA table_info(notification_settings)').all() as Array<{ name: string }>;
@@ -279,6 +295,27 @@ export class AlertDatabase {
   activeRecoveryForService(service:string):boolean { return Number((this.db.prepare("SELECT COUNT(*) AS count FROM recovery_executions WHERE service=? AND status IN ('RUNNING','PENDING')").get(service) as {count:number}).count)>0; }
   finishRecoveryExecution(id:number,status:'SUCCESS'|'FAILED'|'TIMED_OUT',output:string):void { this.db.prepare('UPDATE recovery_executions SET status=?,output=?,completed_at=? WHERE id=?').run(status,output.slice(0,10000),now(),id); }
   recoveryExecutions():Array<Record<string,unknown>> { return this.db.prepare('SELECT * FROM recovery_executions ORDER BY id DESC LIMIT 100').all() as Array<Record<string,unknown>>; }
+
+  recordDashboardEvent(event: LiveEvent): void {
+    const data = event.data;
+    const eventId = typeof data.eventId === 'string' ? data.eventId : `${event.type}:${String(data.executionId ?? data.deliveryId ?? data.jobId ?? data.fingerprint ?? 'state')}:${String(data.status ?? data.event ?? '')}`;
+    const incidentId = typeof data.fingerprint === 'string' ? data.fingerprint : null;
+    const service = typeof data.service === 'string' ? data.service : null;
+    const severity = typeof data.severity === 'string' ? data.severity : null;
+    const status = typeof data.status === 'string' ? data.status : null;
+    const relatedId = data.executionId ?? data.deliveryId ?? data.jobId;
+    this.db.prepare(`INSERT OR IGNORE INTO dashboard_events (event_id, incident_id, service_id, event_type, severity, status, occurred_at, related_record_type, related_record_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(eventId, incidentId, service, event.type, severity, status, event.timestamp, relatedId !== undefined ? event.type : null, relatedId !== undefined ? String(relatedId) : null, JSON.stringify(data));
+  }
+
+  dashboardEvents(filters: { service?: string; severity?: string; type?: string; since?: string; limit?: number; offset?: number } = {}): Array<Record<string, unknown>> {
+    const conditions: string[] = []; const params: Record<string, unknown> = {};
+    if (filters.service) { conditions.push('service_id = @service'); params.service = filters.service; }
+    if (filters.severity) { conditions.push('severity = @severity'); params.severity = filters.severity; }
+    if (filters.type) { conditions.push('event_type = @type'); params.type = filters.type; }
+    if (filters.since) { conditions.push('occurred_at >= @since'); params.since = filters.since; }
+    const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500); const offset = Math.max(filters.offset ?? 0, 0);
+    return this.db.prepare(`SELECT * FROM dashboard_events ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY occurred_at DESC LIMIT ${limit} OFFSET ${offset}`).all(params) as Array<Record<string, unknown>>;
+  }
 
 
   streamStats(): { published: number; processed: number; failures: number; recentEvents: AlertEvent[] } {

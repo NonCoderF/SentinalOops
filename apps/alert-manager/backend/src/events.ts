@@ -12,6 +12,8 @@ type Listener = (event: LiveEvent) => void;
 export class EventHub {
   private readonly listeners = new Set<Listener>();
 
+  constructor(private readonly persist?: (event: LiveEvent) => void) {}
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -19,6 +21,7 @@ export class EventHub {
 
   publish(type: LiveEventType, data: Record<string, unknown> = {}): void {
     const event: LiveEvent = { type, timestamp: new Date().toISOString(), data };
+    try { this.persist?.(event); } catch { /* persistence must not interrupt live delivery */ }
     for (const listener of this.listeners) {
       try {
         listener(event);
