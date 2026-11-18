@@ -1,4 +1,4 @@
-export type LiveEventType = 'incident' | 'recovery' | 'notification' | 'heartbeat';
+export type LiveEventType = 'incident' | 'recovery' | 'notification' | 'heartbeat' | 'traffic';
 
 export interface LiveEvent {
   type: LiveEventType;
@@ -28,6 +28,13 @@ export class EventHub {
       } catch {
         // A disconnected browser must not affect the poller or notification worker.
       }
+    }
+  }
+
+  publishEphemeral(type: LiveEventType, data: Record<string, unknown> = {}): void {
+    const event: LiveEvent = { type, timestamp: new Date().toISOString(), data };
+    for (const listener of this.listeners) {
+      try { listener(event); } catch { /* live clients may disconnect between events */ }
     }
   }
 

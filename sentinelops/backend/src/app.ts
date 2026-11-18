@@ -173,6 +173,29 @@ function points(rows: PromRangeRow[]): Array<[number, number]> {
 function latest(rows: PromRangeRow[]): number | null { const values = rows.flatMap(row => row.values ?? []).map(([, value]) => finite(value)).filter((value): value is number => value != null); return values.length ? values[values.length - 1] : null; }
 function statusCodeClass(code: string): '2xx' | '3xx' | '4xx' | '5xx' | 'other' { const n = Number(code); return n >= 200 && n < 300 ? '2xx' : n >= 300 && n < 400 ? '3xx' : n >= 400 && n < 500 ? '4xx' : n >= 500 && n < 600 ? '5xx' : 'other'; }
 
+export function calculateTrafficSummary(points: Array<[number, number]>, totalRequests: number | null, totalErrors: number | null, requestedSeconds: number, step: number) {
+  const timestamps = [...new Set(points.map(([timestamp]) => timestamp))].sort((a, b) => a - b);
+  const coverageSeconds = timestamps.length > 1 ? Math.min(requestedSeconds, Math.max(step, timestamps[timestamps.length - 1] - timestamps[0])) : null;
+  const values = points.map(([, value]) => value).filter(Number.isFinite);
+  return {
+    coverageSeconds,
+    averageRps: totalRequests != null && coverageSeconds ? totalRequests / coverageSeconds : null,
+    peakRps: values.length ? Math.max(...values) : null,
+    errorPercent: totalRequests ? ((totalErrors ?? 0) / totalRequests) * 100 : totalRequests === 0 ? 0 : null
+  };
+}
+
+export function summarizeTrafficStatus(rows: Array<{ statusCode: string; total: number }>) {
+  return rows.reduce((summary, row) => {
+    const group = statusCodeClass(row.statusCode);
+    summary.total += Number.isFinite(row.total) ? row.total : 0;
+    if (group === '2xx') summary.success += row.total;
+    if (group === '4xx') summary.clientErrors += row.total;
+    if (group === '5xx') summary.serverErrors += row.total;
+    return summary;
+  }, { total: 0, success: 0, clientErrors: 0, serverErrors: 0 });
+}
+
 async function trafficIntelligence(range: string, service: string | undefined, route: string | undefined, db: AlertDatabase) {
   const selected = intelligenceWindows[range] ?? intelligenceWindows['15m'];
   const selectedRange = intelligenceWindows[range] ? range : '15m';
@@ -190,39 +213,54 @@ async function trafficIntelligence(range: string, service: string | undefined, r
   const start = now - selected.seconds;
   const queryRange = async (query: string) => prometheusJson<{ result?: PromRangeRow[] }>(`/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start.toFixed(0)}&end=${now.toFixed(0)}&step=${selected.step}`);
   const queryInstant = async (query: string) => prometheusJson<{ result?: PromInstantRow[] }>(`/api/v1/query?query=${encodeURIComponent(query)}`);
-  const [requestsResponse, errorsResponse, p50Response, p95Response, p99Response, statusResponse] = await Promise.all([
+  const [requestsResponse, requestTotalsResponse, errorsResponse, p50Response, p95Response, p99Response, statusResponse] = await Promise.all([
     queryRange(`sum by (application, method, route) (rate(${metric}[${selected.rate}]))`),
+    queryInstant(`sum by (application, method, route) (increase(${metric}[${selectedRange}]))`),
     queryRange(`sum by (application, method, route) (rate(${errorMetric}[${selected.rate}]))`),
     queryRange(`histogram_quantile(0.50, sum by (application, method, route, le) (rate(${histogram}[${selected.rate}])))`),
     queryRange(`histogram_quantile(0.95, sum by (application, method, route, le) (rate(${histogram}[${selected.rate}])))`),
     queryRange(`histogram_quantile(0.99, sum by (application, method, route, le) (rate(${histogram}[${selected.rate}])))`),
     queryInstant(`sum by (application, route, method, status_code) (increase(${metric}[${selectedRange}]))`)
   ]);
-  const requestRows = requestsResponse?.result ?? [], errorRows = errorsResponse?.result ?? [];
+  const requestRows = requestsResponse?.result ?? [], requestTotalRows = requestTotalsResponse?.result ?? [], errorRows = errorsResponse?.result ?? [];
   const p50Rows = p50Response?.result ?? [], p95Rows = p95Response?.result ?? [], p99Rows = p99Response?.result ?? [];
   const statusRows = statusResponse?.result ?? [];
   const routeKey = (labels: Record<string, string>) => `${labels.application ?? 'unknown'}\u0000${labels.method ?? 'unknown'}\u0000${labels.route ?? 'unknown'}`;
+  const registeredKeys = new Set(registered.map(item => {
+    let pathname = 'unknown';
+    try { pathname = new URL(item.endpointUrl).pathname; } catch { /* invalid historical URLs remain out of scope */ }
+    return `${item.applicationName}\u0000${item.method}\u0000${pathname}`;
+  }));
+  const inScope = (row: { metric: Record<string, string> }) => registeredKeys.has(routeKey(row.metric));
+  const scopedRequestRows = requestRows.filter(inScope);
+  const scopedRequestTotalRows = requestTotalRows.filter(inScope);
+  const scopedErrorRows = errorRows.filter(inScope);
+  const scopedStatusRows = statusRows.filter(inScope);
   const matching = (rows: PromRangeRow[], key: string) => rows.filter(row => routeKey(row.metric) === key);
   const requestSeries = new Map<string, Array<[number, number]>>();
-  for (const row of requestRows) requestSeries.set(routeKey(row.metric), points([row]));
+  for (const row of scopedRequestRows) requestSeries.set(routeKey(row.metric), points([row]));
   const selectedSeries = [...requestSeries.entries()].map(([key, values]) => { const [name, method, path] = key.split('\u0000'); return { name, method, route: path, points: values }; });
   const endpointRows = new Map<string, { application: string; route: string; method: string; total: number; errors4xx: number; errors5xx: number }>();
-  for (const row of statusRows) {
+  for (const row of scopedRequestTotalRows) {
     const applicationName = row.metric.application ?? 'unknown'; const path = row.metric.route ?? 'unknown'; const method = row.metric.method ?? 'unknown'; const key = `${applicationName}\u0000${method}\u0000${path}`; const value = finite(row.value?.[1]);
-    if (value == null) continue; const entry = endpointRows.get(key) ?? { application: applicationName, route: path, method, total: 0, errors4xx: 0, errors5xx: 0 }; entry.total += value; const group = statusCodeClass(row.metric.status_code ?? ''); if (group === '4xx') entry.errors4xx += value; if (group === '5xx') entry.errors5xx += value; endpointRows.set(key, entry);
+    if (value == null) continue; endpointRows.set(key, { application: applicationName, route: path, method, total: value, errors4xx: 0, errors5xx: 0 });
+  }
+  for (const row of scopedStatusRows) {
+    const applicationName = row.metric.application ?? 'unknown'; const path = row.metric.route ?? 'unknown'; const method = row.metric.method ?? 'unknown'; const key = `${applicationName}\u0000${method}\u0000${path}`; const value = finite(row.value?.[1]);
+    if (value == null) continue; const entry = endpointRows.get(key) ?? { application: applicationName, route: path, method, total: 0, errors4xx: 0, errors5xx: 0 }; const group = statusCodeClass(row.metric.status_code ?? ''); if (group === '4xx') entry.errors4xx += value; if (group === '5xx') entry.errors5xx += value; endpointRows.set(key, entry);
   }
   const endpoints = [...endpointRows.values()].filter(entry => registered.some(item => item.applicationName === entry.application && item.method === entry.method && (() => { try { return new URL(item.endpointUrl).pathname === entry.route; } catch { return false; } })())).map(entry => {
     const key = `${entry.application}\u0000${entry.method}\u0000${entry.route}`; const rps = requestSeries.get(key) ?? []; const values = rps.map(([, value]) => value); const p95 = latest(matching(p95Rows, key)); const p99 = latest(matching(p99Rows, key)); const totalErrors = entry.errors4xx + entry.errors5xx;
     return { ...entry, averageRps: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, peakRps: values.length ? Math.max(...values) : null, errorPercent: entry.total ? totalErrors / entry.total * 100 : null, p95Seconds: p95, p99Seconds: p99, lastObserved: rps.length ? new Date(rps[rps.length - 1][0] * 1000).toISOString() : null };
   }).sort((a, b) => b.total - a.total);
-  const allRequestPoints = points(requestRows); const requestValues = allRequestPoints.map(([, value]) => value); const totalRequests = endpoints.length ? endpoints.reduce((sum, item) => sum + item.total, 0) : null; const totalErrors = endpoints.length ? endpoints.reduce((sum, item) => sum + item.errors4xx + item.errors5xx, 0) : null;
+  const allRequestPoints = points(scopedRequestRows); const totalRequests = endpoints.length ? endpoints.reduce((sum, item) => sum + item.total, 0) : null; const totalErrors = endpoints.length ? endpoints.reduce((sum, item) => sum + item.errors4xx + item.errors5xx, 0) : null; const summaryMetrics = calculateTrafficSummary(allRequestPoints, totalRequests, totalErrors, selected.seconds, selected.step);
   const freshness = allRequestPoints.length ? new Date(allRequestPoints[allRequestPoints.length - 1][0] * 1000).toISOString() : null;
   return {
     range: selectedRange, service: application ?? 'all', route: endpoint ?? 'all', filters: { applications, routes }, source: 'Prometheus application instrumentation', freshness,
-    supported: { requests: requestRows.length > 0, latency: p95Rows.length > 0, status: statusRows.length > 0, payloadSize: false, infrastructure: false },
-    summary: { totalRequests, averageRps: requestValues.length ? requestValues.reduce((sum, value) => sum + value, 0) / requestValues.length : null, peakRps: requestValues.length ? Math.max(...requestValues) : null, errorPercent: totalRequests ? (totalErrors ?? 0) / totalRequests * 100 : null, p50Seconds: latest(p50Rows), p95Seconds: latest(p95Rows), p99Seconds: latest(p99Rows), availability: null, averageResponseBytes: null },
-    series: { requestsPerSecond: selectedSeries, errorsPerSecond: errorRows.map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p50: p50Rows.map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p95: p95Rows.map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p99: p99Rows.map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })) },
-    status: statusRows.map(row => ({ application: row.metric.application ?? 'unknown', route: row.metric.route ?? 'unknown', method: row.metric.method ?? 'unknown', statusCode: row.metric.status_code ?? 'unknown', total: finite(row.value?.[1]) ?? 0 })), endpoints,
+    supported: { requests: scopedRequestRows.length > 0, latency: p95Rows.length > 0, status: scopedStatusRows.length > 0, payloadSize: false, infrastructure: false },
+    summary: { totalRequests, averageRps: summaryMetrics.averageRps, peakRps: summaryMetrics.peakRps, errorPercent: summaryMetrics.errorPercent, coverageSeconds: summaryMetrics.coverageSeconds, p50Seconds: endpoint ? latest(p50Rows.filter(row => inScope(row))) : null, p95Seconds: endpoint ? latest(p95Rows.filter(row => inScope(row))) : null, p99Seconds: endpoint ? latest(p99Rows.filter(row => inScope(row))) : null, availability: null, averageResponseBytes: null },
+    series: { requestsPerSecond: selectedSeries, errorsPerSecond: scopedErrorRows.map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p50: p50Rows.filter(inScope).map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p95: p95Rows.filter(inScope).map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })), p99: p99Rows.filter(inScope).map(row => ({ name: row.metric.application ?? 'unknown', method: row.metric.method ?? 'unknown', route: row.metric.route ?? 'unknown', points: points([row]) })) },
+    status: scopedStatusRows.map(row => ({ application: row.metric.application ?? 'unknown', route: row.metric.route ?? 'unknown', method: row.metric.method ?? 'unknown', statusCode: row.metric.status_code ?? 'unknown', total: finite(row.value?.[1]) ?? 0 })), endpoints,
     infrastructure: { cpu: null, memory: null, networkReceive: null, networkTransmit: null, restartCount: null, replicaCount: null, availability: null }
   };
 }

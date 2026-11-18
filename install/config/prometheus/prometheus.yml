@@ -25,7 +25,9 @@ scrape_configs:
     static_configs:
       - targets: [host.docker.internal:9464]
   - job_name: sentinelops-application-metrics
+    scrape_interval: 2s
+    scrape_timeout: 1s
     metrics_path: /metrics
     file_sd_configs:
       - files: [/etc/prometheus/file_sd/metrics.json]
-        refresh_interval: 15s
+        refresh_interval: 2s

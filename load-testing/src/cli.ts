@@ -24,6 +24,7 @@ type Options = {
     metricsPort: number;
     scenario: string;
     yes: boolean;
+    loop: boolean;
 };
 
 const root = process.cwd();
@@ -97,7 +98,8 @@ async function parseOptions(): Promise<Options> {
         metricsPort: Math.floor(numberArg('metrics-port', 9464)),
         scenario: arg('scenario', command)!,
         targets,
-        yes: process.argv.includes('--yes')
+        yes: process.argv.includes('--yes'),
+        loop: process.argv.includes('--loop')
     };
 }
 
@@ -307,12 +309,17 @@ async function run(options: Options): Promise<void> {
             }
             const memory = process.memoryUsage();
             const freeRatio = os.freemem() / os.totalmem();
-            resourceSamples.push({
-                at: Date.now(),
-                rssBytes: memory.rss,
-                heapUsedBytes: memory.heapUsed,
-                freeMemoryRatio: freeRatio
-            });
+            // Keep resource telemetry bounded. Sampling every request makes long
+            // runs consume unbounded memory and can overflow the call stack when
+            // the report computes the peak value.
+            if (completed % 100 === 0) {
+                resourceSamples.push({
+                    at: Date.now(),
+                    rssBytes: memory.rss,
+                    heapUsedBytes: memory.heapUsed,
+                    freeMemoryRatio: freeRatio
+                });
+            }
             if (freeRatio < 0.05) {
                 stoppedBy = 'local memory safety limit';
                 break;
@@ -361,7 +368,7 @@ async function run(options: Options): Promise<void> {
             peakRps,
             durationSeconds,
             processCpuPercent: ((cpuTotal.user + cpuTotal.system) / 1_000_000) / Math.max(durationSeconds, 0.001) * 100,
-            peakResidentMemoryBytes: Math.max(finalMemory.rss, ...resourceSamples.map(sample => sample.rssBytes)),
+            peakResidentMemoryBytes: resourceSamples.reduce((peak, sample) => Math.max(peak, sample.rssBytes), finalMemory.rss),
             responseBytes,
             responseBytesPerSecond: responseBytes / Math.max(durationSeconds, 0.001)
         },
@@ -373,7 +380,7 @@ async function run(options: Options): Promise<void> {
 }
 
 function printHelp(): void {
-    console.log(`SentinelOops load testing (localhost only)\n\nCommands:\n  smoke       1,000 requests\n  benchmark   100,000 requests\n  stress      1,000,000 requests\n  billion     1,000,000,000 requests; requires explicit confirmation\n  stop        request an emergency stop\n  report      print the latest JSON report\n\nOptions: --total=N --vus=N --rate=N --duration=SECONDS --target=URL --targets=file|saved|URL,URL --timeout-ms=N --failure-threshold=0.05 --latency-limit-ms=N --yes\nUse --targets=file to load independent targets from load-testing/targets.json.\nMetrics: http://localhost:9464/metrics`);
+    console.log(`SentinelOops load testing (localhost only)\n\nCommands:\n  smoke       1,000 requests\n  benchmark   100,000 requests\n  stress      1,000,000 requests\n  billion     1,000,000,000 requests; requires explicit confirmation\n  stop        request an emergency stop\n  report      print the latest JSON report\n\nOptions: --total=N --vus=N --rate=N --duration=SECONDS --target=URL --targets=file|saved|URL,URL --timeout-ms=N --failure-threshold=0.05 --latency-limit-ms=N --yes --loop\nUse --targets=file to load independent targets from load-testing/targets.json.\nUse --loop to repeat the configured request batch until Ctrl+C or an emergency stop.\nMetrics: http://localhost:9464/metrics`);
 }
 
 const command = process.argv[2] ?? 'help';
@@ -390,7 +397,12 @@ if (command === 'stop') {
     }
 } else if (['smoke', 'benchmark', 'stress', 'billion'].includes(command)) {
     try {
-        await run(await parseOptions());
+        const options = await parseOptions();
+        do {
+            await run(options);
+            if (!options.loop || await stopped()) break;
+            console.log(`batch completed; starting the next ${options.total.toLocaleString()}-request batch`);
+        } while (options.loop);
     } catch (error) {
         console.error(error instanceof Error ? error.message : error);
         process.exitCode = 1;

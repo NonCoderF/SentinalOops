@@ -4,6 +4,7 @@ import { startNotificationWorker, startPrometheusPolling } from './poller.js';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { EventHub } from './events.js';
+import { startTrafficStreaming } from './traffic-stream.js';
 
 const port = Number(process.env.PORT ?? 8081);
 const host = process.env.HOST ?? '0.0.0.0';
@@ -32,6 +33,7 @@ if (envSmtpHost) {
 }
 const app = buildAlertManagerApp({ db, adminToken, webhookToken, dashboardUrl: process.env.DASHBOARD_URL, authEnabled: process.env.AUTH_ENABLED === 'true', events });
 const stopPolling = startPrometheusPolling(db, process.env.DASHBOARD_URL, events);
+const stopTraffic = startTrafficStreaming(db, events);
 const stopNotifications = startNotificationWorker(db, process.env.DASHBOARD_URL, events);
 const frontendNoCache = process.env.FRONTEND_NO_CACHE === 'true';
 await app.register(fastifyStatic, {
@@ -56,6 +58,7 @@ const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutdown requested');
   await app.close();
   stopPolling();
+  stopTraffic();
   stopNotifications();
   db.close();
   process.exit(0);

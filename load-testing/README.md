@@ -23,6 +23,7 @@ npm run loadtest -- smoke
 npm run loadtest -- benchmark --vus=20 --rate=250
 npm run loadtest -- stress --vus=50 --rate=500 --yes
 npm run loadtest -- billion --vus=100 --rate=1000 --yes
+npm run loadtest -- stress --total=1000000 --vus=500 --rate=1000 --loop --yes
 npm run loadtest -- stop
 npm run loadtest -- report
 ```
@@ -44,6 +45,7 @@ Useful controls:
 --targets=file            load enabled URLs from load-testing/targets.json
 --targets=saved           legacy mode; fetch enabled URLs from SentinelOps
 --yes                     confirm a large test non-interactively
+--loop                    repeat the configured batch until stopped
 ```
 
 Press Ctrl+C or run `npm run loadtest -- stop` from another terminal for an emergency stop. Reports are written to `load-testing/reports/latest.json` and `load-testing/reports/latest.md`.

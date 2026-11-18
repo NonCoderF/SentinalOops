@@ -100,6 +100,82 @@
   border-radius: 50%;
 }
 
+.analytics-clickable { cursor: pointer; }
+.analytics-clickable:hover { filter: brightness(1.22); }
+.traffic-live-stale { color: var(--mc-amber); }
+.traffic-live-stale i { background: var(--mc-amber); box-shadow: 0 0 0 3px rgba(245, 189, 96, .14); }
+.endpoint-data-row,
+.endpoint-mini-link {
+  width: 100%;
+  border-inline: 0;
+  border-top: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.endpoint-data-row:hover,
+.endpoint-mini-link:hover {
+  background: rgba(53, 213, 193, .07);
+}
+.endpoint-data-row:hover strong,
+.endpoint-mini-link:hover span { color: var(--mc-teal); }
+.endpoint-mini-link {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--mc-border-soft);
+}
+.endpoint-mini-link span {
+  overflow: hidden;
+  color: var(--mc-teal);
+  font-family: "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.endpoint-mini-link strong { color: var(--mc-text); white-space: nowrap; }
+
+.advanced-traffic-chart { min-height: 420px; }
+.traffic-chart-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px; }
+.traffic-chart-controls select,
+.traffic-chart-controls input { min-height:32px; border:1px solid var(--mc-border); border-radius:7px; background:var(--mc-input); color:var(--mc-text); padding:6px 9px; font-size:11px; }
+.traffic-chart-controls input { min-width:180px; }
+.advanced-traffic-plot { position:relative; height:330px; margin-top:8px; }
+.advanced-traffic-plot svg { width:100%; height:100%; overflow:visible; touch-action:none; }
+.traffic-tooltip { position:absolute; z-index:3; display:grid; gap:4px; min-width:190px; padding:10px 11px; border:1px solid var(--mc-teal); border-radius:8px; background:rgba(9,17,29,.96); box-shadow:0 12px 28px rgba(0,0,0,.35); color:var(--mc-muted); font:10px "JetBrains Mono",monospace; pointer-events:none; transform:translateX(-8px); }
+.traffic-tooltip strong { color:var(--mc-text); font-size:11px; }
+.traffic-tooltip span:first-of-type { color:var(--mc-teal); }
+.advanced-traffic-chart .analytics-axis { margin-top:4px; }
+.advanced-traffic-chart .analytics-axis strong { color:var(--mc-amber); }
+.time-series-plot { position:relative; }
+.time-series-y-axis { position:absolute; inset:0 auto 0 0; width:48px; pointer-events:none; color:var(--mc-dim); font:9px "JetBrains Mono",monospace; }
+.time-series-y-axis span { position:absolute; right:6px; transform:translateY(-50%); }
+.time-series-y-title { display:none; }
+.time-series-x-axis { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; }
+.time-series-x-ticks { display:flex; min-width:0; justify-content:space-between; color:var(--mc-dim); font:9px "JetBrains Mono",monospace; }
+.time-series-x-ticks span { white-space:nowrap; }
+.time-series-x-axis strong { white-space:nowrap; color:var(--mc-amber); }
+.axis-title { color:var(--mc-muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.analytics-legend-item small { color:var(--mc-text); font:10px "JetBrains Mono",monospace; }
+.endpoint-traffic-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:8px; margin-top:14px; }
+.endpoint-traffic-card { display:grid; gap:5px; min-width:0; border:1px solid var(--mc-border); border-radius:8px; background:rgba(16,26,41,.8); color:var(--mc-muted); padding:10px; text-align:left; cursor:pointer; }
+.endpoint-traffic-card:hover,.endpoint-traffic-card.active { border-color:var(--mc-teal); background:rgba(23,55,65,.5); }
+.endpoint-traffic-card strong { overflow:hidden; color:var(--mc-text); font:600 11px "JetBrains Mono",monospace; text-overflow:ellipsis; white-space:nowrap; }
+.endpoint-traffic-card>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.endpoint-traffic-card>div { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; align-items:end; margin-top:4px; }
+.endpoint-traffic-card b { color:var(--mc-teal); font:700 12px "JetBrains Mono",monospace; }
+.endpoint-traffic-card div small { font-size:9px; }
+.endpoint-traffic-card>small { color:var(--mc-dim); font-size:9px; }
+@media (max-width:700px) {
+  .advanced-traffic-chart { min-height:360px; }
+  .advanced-traffic-plot { height:260px; }
+  .traffic-chart-controls input { min-width:130px; flex:1; }
+  .endpoint-traffic-cards { grid-template-columns:1fr 1fr; }
+}
+
 .analytics-gridline { stroke: var(--mc-border); }
 .analytics-coverage strong { color: var(--mc-amber); }
 
