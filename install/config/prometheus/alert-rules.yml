@@ -1,0 +1,25 @@
+groups:
+  - name: sentinelops-probes
+    rules:
+      - alert: SentinelOpsEndpointDown
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: '{{ $labels.application }}'
+        annotations:
+          summary: "Monitored endpoint is unavailable"
+          description: "Blackbox probing reports a registered endpoint as unavailable."
+
+  - name: sentinelops-application
+    interval: 15s
+    rules:
+      - alert: SentinelOpsApplicationDown
+        expr: up{job="sentinelops-application-metrics"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: '{{ $labels.application }}'
+        annotations:
+          summary: "Registered application metrics are unavailable"
+          description: "The explicitly configured application metrics target cannot be scraped."

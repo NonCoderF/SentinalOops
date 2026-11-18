@@ -1,5 +1,34 @@
 # SentinelOops
 
+## Independent components
+
+- `test-service/` is an optional demo API on port 8080. It is never installed by SentinelOps.
+- `sentinelops/` contains the monitoring product.
+- `install/` deploys SentinelOps, Prometheus, Grafana, and Blackbox Exporter with persistent named volumes.
+
+## Clean installation and verification
+
+```bash
+docker compose -f test-service/docker-compose.yml up -d --build
+curl http://localhost:8080/api/health
+curl http://localhost:8080/api/users
+curl http://localhost:8080/api/products
+curl http://localhost:8080/metrics
+
+chmod +x install/install.sh
+./install/install.sh
+```
+
+Open `http://localhost:3005/setup` and register the demo endpoints through the wizard. The installer does not register or assume them. To scrape real demo metrics, set `PROMETHEUS_METRICS_TARGET=host.docker.internal:8080` and `PROMETHEUS_METRICS_APPLICATION=demo-service` in `install/.env` before installation. Docker Desktop on Windows/macOS supports `host.docker.internal`; Linux users can use the installer host-gateway mapping or a reachable Docker-network DNS name. Remote targets must be explicitly authorized.
+
+PowerShell:
+
+```powershell
+docker compose -f test-service/docker-compose.yml up -d --build
+docker compose --env-file install/.env -f install/docker-compose.yml up -d --build
+Start-Process http://localhost:3005/setup
+```
+
 ## Observe. Detect. Recover.
 
 SentinelOops is a local-first infrastructure monitoring and incident-response project. It combines a Node.js test service, Prometheus metrics and alert rules, Grafana dashboards, a custom Alert Manager, and a restricted recovery controller into a reproducible Docker Compose workflow.
@@ -78,7 +107,7 @@ flowchart LR
     A --- V3
 ~~~
 
-The active root Compose stack contains five services: test-service, prometheus, grafana, alert-manager, and recovery-controller. The recovery controller has no host port and is reachable only from the Compose network. monitoring/alertmanager/alertmanager.yml and apps/alert-receiver are retained legacy material and are not active services in the current root Compose file.
+The production installation is defined by `install/docker-compose.yml` and deploys SentinelOps, Prometheus, Grafana, and Blackbox Exporter. The optional demo service is defined separately in `test-service/docker-compose.yml`.
 
 ## Technology Stack
 

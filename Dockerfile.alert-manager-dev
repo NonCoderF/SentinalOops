@@ -4,9 +4,9 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
-COPY apps/test-service/tsconfig.json ./apps/test-service/tsconfig.json
-COPY apps/alert-manager/backend ./apps/alert-manager/backend
-COPY apps/alert-manager/frontend ./apps/alert-manager/frontend
+COPY test-service/tsconfig.json ./test-service/tsconfig.json
+COPY sentinelops/backend ./sentinelops/backend
+COPY sentinelops/frontend ./sentinelops/frontend
 ENV NODE_ENV=development
 ENV FRONTEND_NO_CACHE=true
-CMD ["sh", "-c", "./node_modules/.bin/tsx apps/alert-manager/backend/src/server.ts & exec npm run dev:frontend -- --host 0.0.0.0"]
+CMD ["sh", "-c", "./node_modules/.bin/tsx sentinelops/backend/src/server.ts & exec npm run dev:frontend -- --host 0.0.0.0"]

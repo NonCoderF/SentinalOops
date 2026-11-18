@@ -1,0 +1,2 @@
+npm run loadtest -- stop; Start-Sleep -Seconds 3; npm run loadtest -- billion --total=1000000000 --rate=1000 --vus=500 --yes
+npm run loadtest -- stop; Start-Sleep -Seconds 3; npm run loadtest -- stress --total=1000000 --rate=10000 --vus=500 --yes

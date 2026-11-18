@@ -1,0 +1,13 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {"type":"stat","title":"Endpoint availability","gridPos":{"h":6,"w":8,"x":0,"y":0},"targets":[{"expr":"avg(probe_success) * 100","legendFormat":"availability"}]},
+    {"type":"timeseries","title":"Probe response duration","gridPos":{"h":8,"w":16,"x":8,"y":0},"targets":[{"expr":"probe_http_duration_seconds","legendFormat":"{{instance}}"}]},
+    {"type":"timeseries","title":"HTTP probe success","gridPos":{"h":8,"w":16,"x":0,"y":6},"targets":[{"expr":"probe_success","legendFormat":"{{instance}}"}]}
+  ],
+  "schemaVersion": 39,
+  "title": "SentinelOps API Monitoring",
+  "uid": "sentinelops-api-monitoring",
+  "version": 1
+}

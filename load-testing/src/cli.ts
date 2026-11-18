@@ -16,6 +16,7 @@ type Options = {
     rate: number;
     durationSeconds?: number;
     target: string;
+    targets: string[];
     timeoutMs: number;
     failureThreshold: number;
     latencyLimitMs: number;
@@ -41,7 +42,30 @@ function numberArg(name: string, fallback: number): number {
     return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function parseOptions(): Options {
+async function savedTargets(): Promise<string[]> {
+    const response = await fetch('http://127.0.0.1:3005/api/setup/endpoints');
+    if (!response.ok) throw new Error(`Unable to load saved endpoints from SentinelOps (${response.status}).`);
+    const data = await response.json() as { endpoints?: Array<{endpointUrl?: string; enabled?: boolean}> };
+    return (data.endpoints ?? []).filter(endpoint => endpoint.enabled !== false && endpoint.endpointUrl).map(endpoint => endpoint.endpointUrl as string);
+}
+
+async function fileTargets(): Promise<string[]> {
+    const filePath = path.join(root, 'load-testing', 'targets.json');
+    const data = JSON.parse(await readFile(filePath, 'utf8')) as {targets?: Array<string | {url?: string; enabled?: boolean}>};
+    return (data.targets ?? []).filter(target => typeof target === 'string' || target.enabled !== false)
+        .map(target => typeof target === 'string' ? target : target.url)
+        .filter((target): target is string => Boolean(target));
+}
+
+function validateTarget(target: string): string {
+    const parsed = new URL(target);
+    if (parsed.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname)) {
+        throw new Error(`Target must be an HTTP URL on localhost, 127.0.0.1, or ::1: ${target}`);
+    }
+    return target;
+}
+
+async function parseOptions(): Promise<Options> {
     const command = process.argv[2] ?? 'help';
     const presets: Record<string, number> = {
         smoke: 1_000,
@@ -51,10 +75,14 @@ function parseOptions(): Options {
     };
     const total = numberArg('total', presets[command] ?? 1_000);
     const target = arg('target', 'http://localhost:8080/')!;
-    const parsed = new URL(target);
-    if (parsed.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname)) {
-        throw new Error('Target must be an HTTP URL on localhost, 127.0.0.1, or ::1.');
-    }
+    const targetMode = arg('targets');
+    const targets = targetMode === 'saved'
+        ? await savedTargets()
+        : targetMode === 'file'
+            ? await fileTargets()
+        : (targetMode ? targetMode.split(',').map(value => value.trim()).filter(Boolean) : [target]);
+    if (!targets.length) throw new Error('No enabled saved endpoints were found.');
+    targets.forEach(validateTarget);
     return {
         command,
         total,
@@ -68,6 +96,7 @@ function parseOptions(): Options {
         unavailableLimit: Math.floor(numberArg('unavailable-limit', 20)),
         metricsPort: Math.floor(numberArg('metrics-port', 9464)),
         scenario: arg('scenario', command)!,
+        targets,
         yes: process.argv.includes('--yes')
     };
 }
@@ -229,7 +258,8 @@ async function run(options: Options): Promise<void> {
             let result: Result = 'failure';
             let code = 'ERR';
             try {
-                const response = await fetch(options.target, {
+                const target = options.targets[(sequence - 1) % options.targets.length];
+                const response = await fetch(target, {
                     signal: AbortSignal.timeout(options.timeoutMs),
                     headers: {'user-agent': 'sentinelops-load-testing/1.0'}
                 });
@@ -308,7 +338,7 @@ async function run(options: Options): Promise<void> {
     const finalMemory = process.memoryUsage();
     const report = {
         scenario: options.scenario,
-        target: options.target,
+        target: options.targets.join(', '),
         startedAt,
         finishedAt,
         stopReason: stoppedBy,
@@ -343,7 +373,7 @@ async function run(options: Options): Promise<void> {
 }
 
 function printHelp(): void {
-    console.log(`SentinelOops load testing (localhost only)\n\nCommands:\n  smoke       1,000 requests\n  benchmark   100,000 requests\n  stress      1,000,000 requests\n  billion     1,000,000,000 requests; requires explicit confirmation\n  stop        request an emergency stop\n  report      print the latest JSON report\n\nOptions: --total=N --vus=N --rate=N --duration=SECONDS --target=http://localhost:8080/ --timeout-ms=N --failure-threshold=0.05 --latency-limit-ms=N --yes\nMetrics: http://localhost:9464/metrics`);
+    console.log(`SentinelOops load testing (localhost only)\n\nCommands:\n  smoke       1,000 requests\n  benchmark   100,000 requests\n  stress      1,000,000 requests\n  billion     1,000,000,000 requests; requires explicit confirmation\n  stop        request an emergency stop\n  report      print the latest JSON report\n\nOptions: --total=N --vus=N --rate=N --duration=SECONDS --target=URL --targets=file|saved|URL,URL --timeout-ms=N --failure-threshold=0.05 --latency-limit-ms=N --yes\nUse --targets=file to load independent targets from load-testing/targets.json.\nMetrics: http://localhost:9464/metrics`);
 }
 
 const command = process.argv[2] ?? 'help';
@@ -360,7 +390,7 @@ if (command === 'stop') {
     }
 } else if (['smoke', 'benchmark', 'stress', 'billion'].includes(command)) {
     try {
-        await run(parseOptions());
+        await run(await parseOptions());
     } catch (error) {
         console.error(error instanceof Error ? error.message : error);
         process.exitCode = 1;

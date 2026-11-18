@@ -4,7 +4,7 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
-COPY apps/alert-manager/backend ./apps/alert-manager/backend
+COPY sentinelops/backend ./sentinelops/backend
 RUN npm run build:backend
 RUN npm prune --omit=dev
 
@@ -14,8 +14,8 @@ WORKDIR /app
 RUN addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
 COPY --from=build --chown=sentinelops:sentinelops /app/package*.json ./
 COPY --from=build --chown=sentinelops:sentinelops /app/node_modules ./node_modules
-COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-manager/backend/dist ./apps/alert-manager/backend/dist
+COPY --from=build --chown=sentinelops:sentinelops /app/sentinelops/backend/dist ./sentinelops/backend/dist
 RUN mkdir -p /var/lib/sentinelops && chown sentinelops:sentinelops /var/lib/sentinelops
 USER sentinelops
 EXPOSE 8081
-CMD ["node", "apps/alert-manager/backend/dist/src/server.js"]
+CMD ["node", "sentinelops/backend/dist/src/server.js"]

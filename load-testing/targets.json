@@ -1,0 +1,19 @@
+{
+  "targets": [
+    {
+      "name": "API health",
+      "url": "http://localhost:8080/api/health",
+      "enabled": true
+    },
+    {
+      "name": "Users API",
+      "url": "http://localhost:8080/api/users",
+      "enabled": true
+    },
+    {
+      "name": "Products API",
+      "url": "http://localhost:8080/api/products",
+      "enabled": true
+    }
+  ]
+}

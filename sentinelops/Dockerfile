@@ -1,0 +1,25 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY test-service/tsconfig.json ./test-service/tsconfig.json
+COPY sentinelops/backend ./sentinelops/backend
+COPY sentinelops/frontend ./sentinelops/frontend
+RUN npm run build:backend && npm run build:frontend
+RUN npm prune --omit=dev
+
+FROM node:22-alpine AS runtime
+ENV NODE_ENV=production STATIC_ROOT=/app/sentinelops/frontend/dist
+WORKDIR /app
+RUN apk add --no-cache su-exec && addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
+COPY --from=build --chown=sentinelops:sentinelops /app/package*.json ./
+COPY --from=build --chown=sentinelops:sentinelops /app/node_modules ./node_modules
+COPY --from=build --chown=sentinelops:sentinelops /app/sentinelops/backend/dist ./sentinelops/backend/dist
+COPY --from=build --chown=sentinelops:sentinelops /app/sentinelops/frontend/dist ./sentinelops/frontend/dist
+COPY sentinelops/docker/sentinelops-entrypoint.sh /usr/local/bin/sentinelops-entrypoint.sh
+RUN chmod 755 /usr/local/bin/sentinelops-entrypoint.sh && mkdir -p /var/lib/sentinelops && chown sentinelops:sentinelops /var/lib/sentinelops
+EXPOSE 8081
+ENTRYPOINT ["/usr/local/bin/sentinelops-entrypoint.sh"]
+CMD ["node", "sentinelops/backend/dist/src/server.js"]

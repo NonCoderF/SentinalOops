@@ -2,9 +2,17 @@
 
 This module is a manually launched, localhost-only HTTP load generator for the existing `test-service`. It does not run automatically and does not add a Docker Compose service.
 
-## Target
+## Targets
 
-The default target is `http://localhost:8080/`, which is an implemented route in `apps/test-service/src/app.ts`. Targets are rejected unless they use HTTP and resolve to `localhost`, `127.0.0.1`, or `::1`.
+The independent target list is stored in [`load-testing/targets.json`](targets.json). It is not fetched from SentinelOps and is not part of the SentinelOps runtime. Targets are rejected unless they use HTTP and resolve to `localhost`, `127.0.0.1`, or `::1`.
+
+Run all enabled targets from that file:
+
+```powershell
+npm run loadtest -- stress --targets=file --vus=50 --rate=500 --yes
+```
+
+Edit `targets.json` to add, remove, or disable targets. Each entry can be a URL string or an object with `name`, `url`, and `enabled` fields.
 
 ## Commands
 
@@ -33,6 +41,8 @@ Useful controls:
 --latency-limit-ms=2000   stop after a request exceeds this limit
 --unavailable-limit=20    stop after sustained target failures
 --target=http://localhost:8080/
+--targets=file            load enabled URLs from load-testing/targets.json
+--targets=saved           legacy mode; fetch enabled URLs from SentinelOps
 --yes                     confirm a large test non-interactively
 ```
 

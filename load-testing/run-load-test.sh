@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 COMMAND="${COMMAND:-benchmark}"
-TARGET="${TARGET:-http://localhost:8080/}"
+TARGET="${TARGET:-http://localhost:8080/api/health}"
 VUS="${VUS:-50}"
 RATE="${RATE:-250}"
 DURATION="${DURATION:-}"

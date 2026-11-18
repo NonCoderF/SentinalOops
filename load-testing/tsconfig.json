@@ -1,5 +1,5 @@
 {
-  "extends": "../apps/test-service/tsconfig.json",
+  "extends": "../test-service/tsconfig.json",
   "compilerOptions": {
     "outDir": "dist/load-testing",
     "rootDir": ".."

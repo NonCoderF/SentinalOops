@@ -4,22 +4,24 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
-COPY apps/test-service/tsconfig.json ./apps/test-service/tsconfig.json
-COPY apps/alert-manager/backend ./apps/alert-manager/backend
-COPY apps/alert-manager/frontend ./apps/alert-manager/frontend
+COPY test-service/tsconfig.json ./test-service/tsconfig.json
+COPY sentinelops/backend ./sentinelops/backend
+COPY sentinelops/frontend ./sentinelops/frontend
 RUN npm run build:backend && npm run build:frontend
 RUN npm prune --omit=dev
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
-ENV STATIC_ROOT=/app/apps/alert-manager/frontend/dist
+ENV STATIC_ROOT=/app/sentinelops/frontend/dist
 WORKDIR /app
-RUN addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
+RUN apk add --no-cache su-exec && addgroup -S sentinelops && adduser -S sentinelops -G sentinelops
 COPY --from=build --chown=sentinelops:sentinelops /app/package*.json ./
 COPY --from=build --chown=sentinelops:sentinelops /app/node_modules ./node_modules
-COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-manager/backend/dist ./apps/alert-manager/backend/dist
-COPY --from=build --chown=sentinelops:sentinelops /app/apps/alert-manager/frontend/dist ./apps/alert-manager/frontend/dist
+COPY --from=build --chown=sentinelops:sentinelops /app/sentinelops/backend/dist ./sentinelops/backend/dist
+COPY --from=build --chown=sentinelops:sentinelops /app/sentinelops/frontend/dist ./sentinelops/frontend/dist
+COPY sentinelops/docker/sentinelops-entrypoint.sh /usr/local/bin/sentinelops-entrypoint.sh
+RUN chmod 755 /usr/local/bin/sentinelops-entrypoint.sh
 RUN mkdir -p /var/lib/sentinelops && chown sentinelops:sentinelops /var/lib/sentinelops
-USER sentinelops
 EXPOSE 8081
-CMD ["node", "apps/alert-manager/backend/dist/src/server.js"]
+ENTRYPOINT ["/usr/local/bin/sentinelops-entrypoint.sh"]
+CMD ["node", "sentinelops/backend/dist/src/server.js"]

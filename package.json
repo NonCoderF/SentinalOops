@@ -8,16 +8,17 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p apps/test-service/tsconfig.json",
-    "build:receiver": "tsc -p apps/alert-receiver/tsconfig.json",
-    "build:backend": "tsc -p apps/alert-manager/backend/tsconfig.json",
-    "build:recovery-controller": "tsc -p apps/recovery-controller/tsconfig.json",
-    "build:frontend": "vite build --config apps/alert-manager/frontend/vite.config.ts",
-    "dev:frontend": "vite --config apps/alert-manager/frontend/vite.config.ts",
+    "build": "npm run build:test-service",
+    "build:test-service": "tsc -p test-service/tsconfig.json",
+    "build:receiver": "tsc -p sentinelops/alert-receiver/tsconfig.json",
+    "build:backend": "tsc -p sentinelops/backend/tsconfig.json",
+    "build:recovery-controller": "tsc -p sentinelops/recovery-controller/tsconfig.json",
+    "build:frontend": "vite build --config sentinelops/frontend/vite.config.ts",
+    "dev:frontend": "vite --config sentinelops/frontend/vite.config.ts",
     "loadtest": "tsx load-testing/src/cli.ts",
-    "start": "node apps/test-service/dist/src/server.js",
-    "dev": "tsx apps/test-service/src/server.ts",
-    "test": "npm run build && npm run build:receiver && npm run build:backend && node --test apps/test-service/dist/test/health.test.js apps/alert-receiver/dist/test/alerts.test.js apps/alert-manager/backend/dist/test/*.test.js"
+    "start": "node test-service/dist/src/server.js",
+    "dev": "tsx test-service/src/server.ts",
+    "test": "npm run build && npm run build:receiver && npm run build:backend && node --test test-service/dist/test/*.test.js sentinelops/alert-receiver/dist/test/*.test.js sentinelops/backend/dist/test/*.test.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",
