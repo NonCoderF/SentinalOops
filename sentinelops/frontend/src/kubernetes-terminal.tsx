@@ -41,6 +41,19 @@ export function KubernetesTerminal() {
     const token = sessionStorage.getItem('sentinelops-admin-token');
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/kubernetes/terminal${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+    const liveEvents = new EventSource(`/api/events/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+    liveEvents.addEventListener('operation', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as { data?: { source?: string; output?: string; command?: string; status?: string } };
+        const data = payload.data;
+        if (data?.source !== 'agent-deploy' && data?.source !== 'k8s-setup') return;
+        const label = data.source === 'k8s-setup' ? 'K8S' : 'AGENT';
+        if (data.command) terminal.writeln(`\r\n\x1b[36m[${label}] ${data.command}\x1b[0m`);
+        if (data.output) terminal.write(data.output);
+        if (data.status === 'SUCCEEDED') terminal.writeln(`\r\n\x1b[32m[${label}] operation verified\x1b[0m`);
+        if (data.status === 'FAILED') terminal.writeln(`\r\n\x1b[31m[${label}] operation failed (exit ${String(data.exitCode ?? 'unknown')})\x1b[0m`);
+      } catch { /* ignore malformed live events */ }
+    });
     socket.addEventListener('open', () => {
       terminal.writeln('\x1b[36mSentinelOops Kubernetes terminal connected.\x1b[0m');
       socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
@@ -69,6 +82,7 @@ export function KubernetesTerminal() {
       hostRef.current?.removeEventListener('pointerdown', focus);
       input.dispose();
       socket.close();
+      liveEvents.close();
       terminal.dispose();
     };
   }, []);

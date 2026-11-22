@@ -15,6 +15,9 @@ import { readTestServiceStatus } from './test-service-status.js';
 import { RecoveryModeManager, type RecoveryModeName } from './recovery-mode.js';
 import websocket from '@fastify/websocket';
 import { registerTerminalBridge } from './terminal-bridge.js';
+import WebSocket from 'ws';
+import { deployAgentThroughTerminal as deployAgentViaTerminal } from './kubernetes-agent-deployer.js';
+import { runKubernetesSetup, type KubernetesSetupOperation } from './kubernetes-setup.js';
 
 interface AlertmanagerPayload {
   alerts: IncomingAlert[];
@@ -51,6 +54,95 @@ function isPrivateIp(value: string): boolean {
 function isLocalHostUrl(target: URL): boolean {
   const host = target.hostname.toLowerCase();
   return host === 'localhost' || host === 'host.docker.internal' || isPrivateIp(host);
+}
+
+const agentManifest = `apiVersion: v1
+kind: Namespace
+metadata:
+  name: sentinelops-agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sentinelops-agent
+  namespace: sentinelops-agent
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinelops-agent
+  namespace: sentinelops-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentinelops-agent
+  template:
+    metadata:
+      labels:
+        app: sentinelops-agent
+    spec:
+      serviceAccountName: sentinelops-agent
+      containers:
+        - name: agent
+          image: sentinelops/kubernetes-agent:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SENTINELOPS_BACKEND_URL
+              value: http://host.docker.internal:3005
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+`;
+
+function deployAgentThroughTerminal(context: string, clusterName: string, token: string): Promise<{ output: string; exitCode: number }> {
+  const encoded = Buffer.from(agentManifest, 'utf8').toString('base64');
+  const command = `printf '%s' '${encoded}' | base64 -d > /tmp/sentinelops-agent.yaml && kind load docker-image sentinelops/kubernetes-agent:local --name '${clusterName}' && kubectl --context '${context}' apply -f /tmp/sentinelops-agent.yaml; code=$?; printf '\\n__SENTINELOPS_AGENT_DEPLOY_DONE__:%s\\n' "$code"`;
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(process.env.KUBERNETES_TERMINAL_URL ?? 'ws://kubernetes-terminal:8787/terminal', { headers: { authorization: `Bearer ${token}` } });
+    let output = '';
+    const timeout = setTimeout(() => { socket.close(); reject(new Error('Agent deployment timed out in the trusted terminal')); }, 120_000);
+    const finish = (code: number) => { clearTimeout(timeout); socket.close(); resolve({ output, exitCode: code }); };
+    socket.once('open', () => socket.send(JSON.stringify({ type: 'input', data: `${command}\n` })));
+    socket.on('message', (data) => {
+      const text = data.toString();
+      output += text;
+      const match = output.match(/__SENTINELOPS_AGENT_DEPLOY_DONE__:(\\d+)/);
+      if (match) finish(Number(match[1]));
+    });
+    socket.once('error', (error) => { clearTimeout(timeout); reject(new Error(`Trusted terminal unavailable: ${error.message}`)); });
+  });
 }
 
 function isLoopbackHost(target: URL): boolean {
@@ -492,7 +584,7 @@ function parseRunbook(body: unknown) {
   return { value: { name, description: typeof body.description === 'string' ? body.description.slice(0, 1000) : '', service, actionType, parameters, timeoutSeconds: integer(body.timeoutSeconds, 30, 1, 300), verificationEndpoint: endpoint, maxAttempts: integer(body.maxAttempts, 1, 1, 5), cooldownSeconds: integer(body.cooldownSeconds, 300, 0, 86400), mode, enabled: body.enabled === undefined ? true : Boolean(body.enabled) } };
 }
 async function verifyService(runbook: RecoveryRunbook, timeoutMs: number): Promise<boolean> {
-  const base = runbook.parameters.healthUrl ?? process.env.RECOVERY_HEALTH_URL;
+  const base = runbook.parameters.healthUrl ?? process.env.RECOVERY_HEALTH_URL ?? 'http://host.docker.internal:8080/api/health';
   if (!base) return false;
   try { const response = await fetch(new URL(runbook.verificationEndpoint, base).toString(), { signal: AbortSignal.timeout(Math.min(timeoutMs, 5000)) }); return response.ok; } catch { return false; }
 }
@@ -536,6 +628,7 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
   const { db, adminToken, webhookToken, dashboardUrl, authEnabled = process.env.AUTH_ENABLED === 'true', publisher, events } = options;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', base: { service: 'sentinelops-alert-manager' }, redact: ['req.headers.authorization', 'req.query.token', 'body.smtpPassword'] } });
   const transitionLocks = new Set<string>();
+  const kubernetesRecoveryLocks = new Set<string>();
   let lastCapacityDiagnostic = '';
   const kubernetesCommands = new ReadonlyKubernetesCommandRunner();
   const recoveryMode = new RecoveryModeManager(db);
@@ -693,6 +786,238 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     commands: readonlyCommands
   }));
   app.get('/api/test-service/status', { preHandler: requireAdmin }, async () => readTestServiceStatus());
+  app.get('/api/kubernetes/agent/config', async (request, reply) => {
+    const policy = db.getKubernetesAgentPolicy();
+    const agentProbeHost = process.env.KUBERNETES_AGENT_PROBE_HOST?.trim();
+    const resolveProbeUrl = (endpoint: ReturnType<AlertDatabase['listMonitoredEndpoints']>[number]): string => {
+      const value = endpoint.probeUrl || endpoint.endpointUrl;
+      if (!agentProbeHost) return value;
+      try {
+        const url = new URL(value);
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') url.hostname = agentProbeHost;
+        return url.toString();
+      } catch { return value; }
+    };
+    const endpoints = db.listMonitoredEndpoints().filter((endpoint) => endpoint.enabled).map((endpoint) => ({ id: endpoint.id, applicationName: endpoint.applicationName, probeUrl: resolveProbeUrl(endpoint), method: endpoint.method, expectedStatus: endpoint.expectedStatus, intervalSeconds: endpoint.intervalSeconds }));
+    return {
+      agentId: String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'),
+      mode: recoveryMode.currentMode(),
+      policy,
+      endpoints,
+      traffic: {
+        prometheusUrl: process.env.KUBERNETES_AGENT_PROMETHEUS_URL?.trim() || 'http://host.docker.internal:9090',
+        requestMetric: 'sentinelops_http_requests_total',
+        intervalSeconds: 5,
+        source: 'Prometheus application instrumentation'
+      },
+      generatedAt: new Date().toISOString()
+    };
+  });
+  app.get('/api/kubernetes/agent/status', { preHandler: requireAdmin }, async () => ({ policy: db.getKubernetesAgentPolicy(), mode: recoveryMode.current(), agents: db.listKubernetesAgents(), leases: db.listKubernetesAgentLeases(), incidents: db.listKubernetesIncidents(50), events: db.listKubernetesAgentEvents(200) }));
+  app.post('/api/kubernetes/agent/deploy', { preHandler: requireAdmin, config: { rateLimit: { max: 3, timeWindow: '10 minutes' } } }, async (_request, reply) => {
+    const lockKey = 'kubernetes-agent-deploy';
+    if (transitionLocks.has(lockKey)) return reply.code(409).send({ error: 'Agent deployment is already in progress' });
+    const terminalUrl = process.env.KUBERNETES_TERMINAL_URL?.trim();
+    const terminalToken = process.env.KUBERNETES_TERMINAL_TOKEN?.trim();
+    if (!terminalUrl || !terminalToken) return reply.code(503).send({ error: 'Trusted terminal is not configured. Set KUBERNETES_TERMINAL_URL and KUBERNETES_TERMINAL_TOKEN.' });
+    const context = process.env.KUBERNETES_CONTEXT?.trim() || 'kind-sentinelops-dev';
+    const clusterName = process.env.KIND_CLUSTER_NAME?.trim() || 'sentinelops-dev';
+    if (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$/.test(context) || !/^sentinelops-dev$/.test(clusterName)) return reply.code(503).send({ error: 'Agent deployment target is not an allowlisted development cluster' });
+    transitionLocks.add(lockKey);
+    try {
+      events?.publishEphemeral('operation', { source: 'agent-deploy', status: 'STARTED', command: 'Automatic Agent bootstrap started.' });
+      const result = await deployAgentViaTerminal({ context, clusterName, terminalUrl, terminalToken, onOutput: (chunk) => events?.publishEphemeral('operation', { source: 'agent-deploy', status: 'RUNNING', output: chunk }) });
+      events?.publishEphemeral('operation', { source: 'agent-deploy', status: result.exitCode === 0 ? 'SUCCEEDED' : 'FAILED', exitCode: result.exitCode });
+      if (result.exitCode !== 0) return reply.code(502).send({ error: 'Agent deployment command failed', output: result.output, exitCode: result.exitCode });
+      return { status: 'applied', context, clusterName, output: result.output };
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'Agent deployment failed' });
+    } finally {
+      transitionLocks.delete(lockKey);
+    }
+  });
+  app.get('/api/kubernetes/topology', { preHandler: requireAdmin }, async (_request, reply) => {
+    const terminalUrl = process.env.KUBERNETES_TERMINAL_URL?.trim();
+    const terminalToken = process.env.KUBERNETES_TERMINAL_TOKEN?.trim();
+    const context = process.env.KUBERNETES_CONTEXT?.trim() || 'kind-sentinelops-dev';
+    const clusterName = process.env.KIND_CLUSTER_NAME?.trim() || 'sentinelops-dev';
+    const namespace = process.env.KUBERNETES_AGENT_NAMESPACE?.trim() || 'sentinelops-system';
+    if (!terminalUrl || !terminalToken) return reply.code(503).send({ error: 'Trusted terminal is not configured' });
+    const lockKey = 'kubernetes-topology-read';
+    if (transitionLocks.has(lockKey)) return reply.code(409).send({ error: 'A topology inspection is already in progress' });
+    transitionLocks.add(lockKey);
+    try {
+      const result = await runKubernetesSetup({ operation: 'topology', clusterName, context, namespace, terminalUrl, terminalToken });
+      const nodesMarker = '__SENTINELOPS_NODES_JSON__';
+      const podsMarker = '__SENTINELOPS_PODS_JSON__';
+      const nodesStart = result.output.lastIndexOf(nodesMarker);
+      const podsStart = result.output.lastIndexOf(podsMarker);
+      const completionStart = result.output.lastIndexOf('__SENTINELOPS_SETUP_DONE__:');
+      if (result.exitCode !== 0 || nodesStart < 0 || podsStart < 0) return reply.code(502).send({ error: 'Kubernetes topology inspection failed', output: result.output, exitCode: result.exitCode });
+      const nodesText = result.output.slice(nodesStart + nodesMarker.length, podsStart).trim();
+      const podsText = result.output.slice(podsStart + podsMarker.length, completionStart > podsStart ? completionStart : undefined).trim();
+      const nodes = JSON.parse(nodesText) as Record<string, unknown>;
+      const pods = JSON.parse(podsText) as Record<string, unknown>;
+      return { context, namespace, nodes: Array.isArray(nodes.items) ? nodes.items : [], pods: Array.isArray(pods.items) ? pods.items : [], agents: db.listKubernetesAgents(), leases: db.listKubernetesAgentLeases(), observedAt: new Date().toISOString() };
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'Kubernetes topology inspection failed' });
+    } finally { transitionLocks.delete(lockKey); }
+  });
+  app.post('/api/kubernetes/failure-test/stop-service', { preHandler: requireAdmin, config: { rateLimit: { max: 3, timeWindow: '10 minutes' } } }, async (_request, reply) => {
+    if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery must be the active mode' });
+    const service = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
+    try {
+      const result = await controlContainer('STOP_CONTAINER', service, 15000);
+      events?.publish('operation', { source: 'failure-testing-lab', action: 'STOP_TEST_SERVICE', service, result });
+      return { status: 'stopped', service, result };
+    } catch (error) { return reply.code(502).send({ error: error instanceof Error ? error.message : 'Test Service stop failed' }); }
+  });
+  app.post('/api/kubernetes/setup/:operation', { preHandler: requireAdmin, config: { rateLimit: { max: 30, timeWindow: '10 minutes' } } }, async (request, reply) => {
+    const allowed: KubernetesSetupOperation[] = ['create-cluster', 'check-cluster', 'create-namespace', 'deploy-agent', 'check-agent-pods', 'agent-logs', 'delete-agent-pod', 'scale-agents-zero', 'delete-cluster', 'inspect-node', 'stop-worker', 'start-worker'];
+    const operation = String((request.params as { operation?: string }).operation ?? '') as KubernetesSetupOperation;
+    if (!allowed.includes(operation)) return reply.code(404).send({ error: 'Unsupported Kubernetes setup operation' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const clusterName = typeof body.clusterName === 'string' ? body.clusterName.trim() : 'sentinelops-dev';
+    const namespace = typeof body.namespace === 'string' ? body.namespace.trim() : 'sentinelops-system';
+    const workerNodes = Number(body.workerNodes ?? 3);
+    const agentPods = Number(body.agentPods ?? 3);
+    const context = `kind-${clusterName}`;
+    const validName = (value: string) => /^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$/.test(value);
+    if (clusterName !== (process.env.KIND_CLUSTER_NAME?.trim() || 'sentinelops-dev') || !validName(clusterName)) return reply.code(400).send({ error: 'Only the allowlisted development kind cluster may be managed' });
+    if (!validName(namespace) || namespace.length > 63) return reply.code(400).send({ error: 'Invalid Kubernetes namespace' });
+    if (!Number.isInteger(workerNodes) || workerNodes < 0 || workerNodes > 10) return reply.code(400).send({ error: 'Worker nodes must be an integer from 0 to 10' });
+    if (!Number.isInteger(agentPods) || agentPods < 1 || agentPods > 20) return reply.code(400).send({ error: 'Agent Pods must be an integer from 1 to 20' });
+    const podName = typeof body.podName === 'string' ? body.podName.trim() : undefined;
+    const nodeName = typeof body.nodeName === 'string' ? body.nodeName.trim() : undefined;
+    if ((podName && !validName(podName)) || (nodeName && !validName(nodeName))) return reply.code(400).send({ error: 'Invalid Pod or node name' });
+    const terminalUrl = process.env.KUBERNETES_TERMINAL_URL?.trim();
+    const terminalToken = process.env.KUBERNETES_TERMINAL_TOKEN?.trim();
+    if (!terminalUrl || !terminalToken) return reply.code(503).send({ error: 'Trusted terminal is not configured' });
+    const mutating = !['check-cluster', 'check-agent-pods', 'agent-logs', 'inspect-node'].includes(operation);
+    const lockKey = `kubernetes-setup-${mutating ? 'mutation' : operation}`;
+    if (transitionLocks.has(lockKey)) return reply.code(409).send({ error: 'A Kubernetes setup operation is already in progress' });
+    transitionLocks.add(lockKey);
+    let output = '';
+    try {
+      events?.publishEphemeral('operation', { source: 'k8s-setup', operation, status: 'STARTED', command: `Kubernetes setup: ${operation}` });
+      const result = await runKubernetesSetup({ operation, clusterName, context, namespace, workerNodes, agentPods, podName, nodeName, terminalUrl, terminalToken, onOutput: (chunk) => { output += chunk; events?.publishEphemeral('operation', { source: 'k8s-setup', operation, status: 'RUNNING', output: chunk }); } });
+      events?.publishEphemeral('operation', { source: 'k8s-setup', operation, status: result.exitCode === 0 ? 'SUCCEEDED' : 'FAILED', exitCode: result.exitCode });
+      if (result.exitCode !== 0) return reply.code(502).send({ error: `Kubernetes setup operation failed (${operation})`, output: result.output || output, exitCode: result.exitCode });
+      return { operation, clusterName, context, namespace, output: result.output || output, exitCode: result.exitCode };
+    } catch (error) {
+      events?.publishEphemeral('operation', { source: 'k8s-setup', operation, status: 'FAILED', error: error instanceof Error ? error.message : 'Operation failed' });
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'Kubernetes setup operation failed', output });
+    } finally { transitionLocks.delete(lockKey); }
+  });
+  app.get('/api/kubernetes/agent/events', { preHandler: requireAdmin }, async (request) => ({ events: db.listKubernetesAgentEvents(Number((request.query as { limit?: string }).limit ?? 100)) }));
+  app.put('/api/kubernetes/agent/policy', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const integer = (name: string, fallback: number, min: number, max: number) => { const value = body?.[name] === undefined ? fallback : Number(body[name]); return Number.isInteger(value) && value >= min && value <= max ? value : null; };
+    const current = db.getKubernetesAgentPolicy();
+    const intervalSeconds = integer('intervalSeconds', Number(current.intervalSeconds), 1, 3600);
+    const timeoutSeconds = integer('timeoutSeconds', Number(current.timeoutSeconds), 1, 60);
+    const failureThreshold = integer('failureThreshold', Number(current.failureThreshold), 1, 20);
+    const cooldownSeconds = integer('cooldownSeconds', Number(current.cooldownSeconds), 0, 86400);
+    const maxAttempts = integer('maxAttempts', Number(current.maxAttempts), 1, 10);
+    if ([intervalSeconds, timeoutSeconds, failureThreshold, cooldownSeconds, maxAttempts].some((value) => value == null)) return reply.code(400).send({ error: 'Invalid agent policy values' });
+    return { policy: db.saveKubernetesAgentPolicy({ enabled: body?.enabled === undefined ? Boolean(current.enabled) : Boolean(body.enabled), intervalSeconds: intervalSeconds as number, timeoutSeconds: timeoutSeconds as number, failureThreshold: failureThreshold as number, cooldownSeconds: cooldownSeconds as number, maxAttempts: maxAttempts as number }) };
+  });
+  app.post('/api/kubernetes/agent/heartbeat', async (request) => {
+    const body = request.body as Record<string, unknown>;
+    const agentId = typeof body?.agentId === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(body.agentId) ? body.agentId : 'kubernetes-agent';
+    db.upsertKubernetesAgent({ agentId, podName: typeof body?.podName === 'string' ? body.podName : undefined, namespace: typeof body?.namespace === 'string' ? body.namespace : undefined, nodeName: typeof body?.nodeName === 'string' ? body.nodeName : undefined, status: 'MONITORING', metadata: body?.metadata });
+    db.recordKubernetesAgentEvent(agentId, 'agent.connected', { status: 'MONITORING' });
+    return { status: 'accepted', mode: recoveryMode.currentMode(), policy: db.getKubernetesAgentPolicy() };
+  });
+  app.post('/api/kubernetes/agent/events', async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const agentId = typeof body?.agentId === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(body.agentId) ? body.agentId : 'kubernetes-agent';
+    const eventType = typeof body?.eventType === 'string' && /^[a-z][a-z0-9_.-]{1,80}$/.test(body.eventType) ? body.eventType : '';
+    if (!eventType) return reply.code(400).send({ error: 'eventType is required' });
+    const incidentId = typeof body?.incidentId === 'string' ? body.incidentId.slice(0, 120) : undefined;
+    if (eventType === 'traffic.sample') {
+      events?.publishEphemeral('traffic', {
+        source: 'kubernetes-agent',
+        agentId,
+        service: typeof body?.service === 'string' ? body.service : 'test-service',
+        rps: Number(body?.rps ?? 0),
+        dataSource: typeof body?.dataSource === 'string' ? body.dataSource : 'Prometheus application instrumentation',
+        deduplicationKey: typeof body?.deduplicationKey === 'string' ? body.deduplicationKey : undefined
+      });
+      return { status: 'accepted', deduplicated: true, sourceOfTruth: 'prometheus' };
+    }
+    if (incidentId && body.eventType === 'incident.created') db.createKubernetesIncident(incidentId, Number(body.monitorId), typeof body.service === 'string' ? body.service : 'test-service', typeof body.error === 'string' ? body.error : 'Health check failed', body.metadata);
+    if (incidentId && body.eventType === 'incident.resolved') db.updateKubernetesIncident(incidentId, { status: 'RECOVERED', recoveredAt: new Date().toISOString() });
+    db.recordKubernetesAgentEvent(agentId, eventType, body, incidentId);
+    events?.publish('operation', { source: 'kubernetes-agent', eventType, incidentId, service: body.service });
+    return { status: 'accepted' };
+  });
+  app.post('/api/kubernetes/agent/lease/acquire', async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const agentId = typeof body?.agentId === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(body.agentId) ? body.agentId : '';
+    const service = typeof body?.service === 'string' ? body.service.trim() : '';
+    const incidentId = typeof body?.incidentId === 'string' ? body.incidentId.trim() : '';
+    const ttlSeconds = Number(body?.ttlSeconds ?? 120);
+    if (!agentId || !service || !incidentId || !Number.isInteger(ttlSeconds) || ttlSeconds < 10 || ttlSeconds > 900) return reply.code(400).send({ error: 'Invalid recovery lease request' });
+    const allowedService = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
+    if (service !== allowedService && service !== 'Test Service' && service !== 'localhost') return reply.code(403).send({ error: 'Recovery lease target is not allowlisted' });
+    const normalizedService = allowedService;
+    if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery is not the active recovery mode' });
+    const policy = db.getKubernetesAgentPolicy();
+    if (!policy.enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
+    const lease = db.acquireKubernetesAgentLease(normalizedService, incidentId, agentId, ttlSeconds);
+    db.recordKubernetesAgentEvent(agentId, lease.acquired ? 'recovery.ownership_acquired' : 'recovery.ownership_contended', { service: normalizedService, incidentId, ownerAgentId: lease.ownerAgentId, expiresAt: lease.expiresAt }, incidentId);
+    return lease.acquired ? lease : reply.code(409).send(lease);
+  });
+  app.post('/api/kubernetes/agent/recovery', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const requestedService = typeof body?.service === 'string' ? body.service.trim() : '';
+    const incidentId = typeof body?.incidentId === 'string' ? body.incidentId.trim() : '';
+    const monitorId = Number(body?.monitorId);
+    const agentId = typeof body?.agentId === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(body.agentId) ? body.agentId : '';
+    const leaseToken = typeof body?.leaseToken === 'string' ? body.leaseToken.trim() : '';
+    const action = body?.action === 'START_CONTAINER' || body?.action === 'RESTART_CONTAINER' ? body.action as 'START_CONTAINER' | 'RESTART_CONTAINER' : null;
+    const allowedService = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
+    const service = requestedService === allowedService || requestedService === 'Test Service' || requestedService === 'localhost' ? allowedService : '';
+    if (!service || !incidentId || !Number.isInteger(monitorId) || !action) return reply.code(400).send({ error: 'Invalid recovery request' });
+    if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery is not the active recovery mode' });
+    const policy = db.getKubernetesAgentPolicy();
+    if (!policy.enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
+    if (!agentId || !leaseToken || !db.validateKubernetesAgentLease(service, incidentId, agentId, leaseToken)) return reply.code(409).send({ error: 'Recovery ownership is missing, expired, or held by another Agent' });
+    const runbook = db.listRunbooks().find((candidate) => candidate.enabled && candidate.mode === 'AUTOMATIC' && candidate.service === service);
+    if (!runbook) return reply.code(409).send({ error: 'No enabled automatic runbook is configured for this recovery target' });
+    if (kubernetesRecoveryLocks.has(service) || db.activeRecoveryForService(service)) return reply.code(409).send({ error: 'A recovery attempt is already running for this service' });
+    const incident = db.getKubernetesIncident(incidentId);
+    if (incident?.status === 'RECOVERED') return reply.code(409).send({ error: 'Incident is already recovered' });
+    const attemptId = crypto.randomUUID();
+    db.createKubernetesAttempt(attemptId, incidentId);
+    db.updateKubernetesIncident(incidentId, { status: 'RECOVERING', recoveryAttempts: Number(incident?.recovery_attempts ?? 0) + 1 });
+    try {
+      events?.publish('recovery', { source: 'kubernetes-agent', incidentId, attemptId, status: 'RECOVERY_REQUESTED', service, action });
+      const result = await controlContainer(action, service, Number(runbook.timeoutSeconds) * 1000);
+      let healthyChecks = 0;
+      const verificationDeadline = Date.now() + Number(runbook.timeoutSeconds) * 1000;
+      while (Date.now() < verificationDeadline) {
+        if (await verifyService(runbook, 5000)) healthyChecks += 1; else healthyChecks = 0;
+        if (healthyChecks >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (healthyChecks < 2) throw new Error('Recovery command completed but API health verification did not pass');
+      db.finishKubernetesAttempt(attemptId, 'SUCCEEDED', undefined, { ...result, verified: true });
+      db.updateKubernetesIncident(incidentId, { status: 'RECOVERED', recoveredAt: new Date().toISOString() });
+      db.recordKubernetesAgentEvent(String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'), 'recovery.succeeded', { incidentId, attemptId, result, verified: true }, incidentId);
+      return { status: 'accepted', attemptId, result, verified: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Recovery executor failed';
+      db.finishKubernetesAttempt(attemptId, 'FAILED', message);
+      db.updateKubernetesIncident(incidentId, { status: 'FAILED', error: message });
+      db.recordKubernetesAgentEvent(String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'), 'recovery.failed', { incidentId, attemptId, error: message }, incidentId);
+      return reply.code(502).send({ error: message, attemptId });
+    } finally {
+      kubernetesRecoveryLocks.delete(service);
+      db.releaseKubernetesAgentLease(service, incidentId, agentId, leaseToken);
+    }
+  });
   app.get('/api/kubernetes/commands', { preHandler: requireAdmin }, async () => ({ operations: kubernetesCommands.list() }));
   app.get('/api/kubernetes/commands/:id', { preHandler: requireAdmin }, async (request, reply) => {
     const operation = kubernetesCommands.get(String((request.params as { id: string }).id));

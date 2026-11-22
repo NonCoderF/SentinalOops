@@ -30,3 +30,4 @@ WORKDIR /workspace
 ENV HOME=/home/terminal TERM=xterm-256color TERMINAL_WORKSPACE=/workspace
 EXPOSE 8787
 CMD ["node", "/app/server.mjs"]
+ENTRYPOINT ["/usr/local/bin/docker-terminal-entrypoint.sh"]

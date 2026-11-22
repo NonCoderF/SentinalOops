@@ -1,0 +1,13 @@
+.kube-setup-card{display:grid;gap:14px}
+.kube-setup-fields,.kube-setup-selection{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kube-setup-selection{grid-template-columns:repeat(4,minmax(0,1fr));align-items:end}
+.kube-setup-fields label,.kube-setup-selection label{display:grid;gap:6px;color:#8fa6c7;font:10px "JetBrains Mono",monospace;text-transform:uppercase}
+.kube-setup-fields input,.kube-setup-selection input{width:100%;box-sizing:border-box}
+.kube-setup-summary{margin:0}
+.kube-setup-buttons{display:flex;flex-wrap:wrap;gap:8px}
+.kube-setup-buttons button,.kube-setup-selection button{min-height:36px}
+.kube-setup-buttons .danger{border-color:#fb718566;color:#ffb4bd}
+.kube-setup-running{margin:0;color:#f5bd60;font:11px "JetBrains Mono",monospace}
+.kube-setup-output{max-height:260px;overflow:auto;margin:0;padding:12px;border:1px solid #253449;border-radius:7px;background:#080d15;color:#b7f7eb;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.55 "JetBrains Mono",monospace}
+@media(max-width:900px){.kube-setup-fields,.kube-setup-selection{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.kube-setup-fields,.kube-setup-selection{grid-template-columns:1fr}.kube-setup-buttons button{flex:1 1 45%}}

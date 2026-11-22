@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sentinelops-agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sentinelops-agent
+  namespace: sentinelops-agent
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinelops-agent-config
+  namespace: sentinelops-agent
+data:
+  SENTINELOPS_BACKEND_URL: "http://host.docker.internal:3005"
+  POD_NAMESPACE: "sentinelops-agent"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinelops-agent
+  namespace: sentinelops-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sentinelops-agent }
+  template:
+    metadata:
+      labels: { app: sentinelops-agent }
+    spec:
+      serviceAccountName: sentinelops-agent
+      containers:
+        - name: agent
+          image: sentinelops/kubernetes-agent:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SENTINELOPS_BACKEND_URL
+              valueFrom: { configMapKeyRef: { name: sentinelops-agent-config, key: SENTINELOPS_BACKEND_URL } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /ready, port: http }, initialDelaySeconds: 3, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 3, periodSeconds: 15 }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 128Mi }

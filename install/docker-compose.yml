@@ -46,8 +46,10 @@ services:
       PROMETHEUS_METRICS_APPLICATION: ${PROMETHEUS_METRICS_APPLICATION:-}
       RECOVERY_CONTROLLER_URL: http://recovery-controller:8090
       RECOVERY_CONTROLLER_TOKEN: ${RECOVERY_CONTROLLER_TOKEN:-local-recovery-controller-token}
-      RECOVERY_ALLOWED_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-}
-      RECOVERY_ALLOWED_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-}
+      RECOVERY_ALLOWED_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-test-service}
+      RECOVERY_HEALTH_URL: ${RECOVERY_HEALTH_URL:-http://host.docker.internal:8080/api/health}
+      RECOVERY_ALLOWED_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-sentinelops/test-service:local}
+      KUBERNETES_AGENT_PROBE_HOST: ${KUBERNETES_AGENT_PROBE_HOST:-host.docker.internal}
       DASHBOARD_URL: http://localhost:${SENTINELOPS_WEB_PORT:-3005}
       KUBERNETES_TERMINAL_URL: ws://kubernetes-terminal:8787/terminal
       KUBERNETES_TERMINAL_TOKEN: ${KUBERNETES_TERMINAL_TOKEN:-local-terminal-token}
@@ -102,7 +104,6 @@ services:
       retries: 5
 
   recovery-controller:
-    profiles: [recovery]
     build:
       context: ..
       dockerfile: sentinelops/recovery-controller/Dockerfile
@@ -110,9 +111,9 @@ services:
     environment:
       PORT: "8090"
       RECOVERY_CONTROLLER_TOKEN: ${RECOVERY_CONTROLLER_TOKEN:-local-recovery-controller-token}
-      ALLOWED_COMPOSE_PROJECT: ${RECOVERY_COMPOSE_PROJECT:-sentinelops}
-      ALLOWED_RECOVERY_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-}
-      ALLOWED_RECOVERY_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-}
+      ALLOWED_COMPOSE_PROJECT: ${RECOVERY_COMPOSE_PROJECT:-sentinelops-test-service}
+      ALLOWED_RECOVERY_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-test-service}
+      ALLOWED_RECOVERY_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-sentinelops/test-service:local}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [sentinelops]

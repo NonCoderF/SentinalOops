@@ -248,6 +248,62 @@ export class AlertDatabase {
         error TEXT,
         metadata_json TEXT NOT NULL DEFAULT '{}'
       );
+      CREATE TABLE IF NOT EXISTS kubernetes_agent_policy (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        enabled INTEGER NOT NULL DEFAULT 0,
+        interval_seconds INTEGER NOT NULL DEFAULT 5,
+        timeout_seconds INTEGER NOT NULL DEFAULT 2,
+        failure_threshold INTEGER NOT NULL DEFAULT 3,
+        cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS kubernetes_agents (
+        agent_id TEXT PRIMARY KEY,
+        pod_name TEXT,
+        namespace TEXT,
+        node_name TEXT,
+        status TEXT NOT NULL,
+        last_heartbeat TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS kubernetes_agent_incidents (
+        incident_id TEXT PRIMARY KEY,
+        monitor_id INTEGER NOT NULL,
+        service TEXT NOT NULL,
+        status TEXT NOT NULL,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        detected_at TEXT NOT NULL,
+        recovered_at TEXT,
+        last_error TEXT,
+        recovery_attempts INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS kubernetes_agent_attempts (
+        attempt_id TEXT PRIMARY KEY,
+        incident_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        completed_at TEXT,
+        error TEXT,
+        result_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS kubernetes_agent_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        incident_id TEXT,
+        event_type TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE TABLE IF NOT EXISTS kubernetes_agent_leases (
+        service TEXT PRIMARY KEY,
+        incident_id TEXT NOT NULL,
+        owner_agent_id TEXT NOT NULL,
+        lease_token TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS monitored_endpoints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_name TEXT NOT NULL,
@@ -394,6 +450,63 @@ export class AlertDatabase {
   recoveryOperations(application?: string): Array<Record<string, unknown>> {
     return (application ? this.db.prepare('SELECT * FROM recovery_operations WHERE application=? ORDER BY id DESC LIMIT 100').all(application) : this.db.prepare('SELECT * FROM recovery_operations ORDER BY id DESC LIMIT 100').all()) as Array<Record<string, unknown>>;
   }
+
+  getKubernetesAgentPolicy(): Record<string, unknown> {
+    let row = this.db.prepare('SELECT * FROM kubernetes_agent_policy WHERE id=1').get() as Record<string, unknown> | undefined;
+    if (!row) {
+      this.db.prepare('INSERT INTO kubernetes_agent_policy (id, enabled, interval_seconds, timeout_seconds, failure_threshold, cooldown_seconds, max_attempts, updated_at) VALUES (1, 0, 5, 2, 3, 60, 3, ?)').run(now());
+      row = this.db.prepare('SELECT * FROM kubernetes_agent_policy WHERE id=1').get() as Record<string, unknown>;
+    }
+    return { enabled: Boolean(row.enabled), intervalSeconds: Number(row.interval_seconds), timeoutSeconds: Number(row.timeout_seconds), failureThreshold: Number(row.failure_threshold), cooldownSeconds: Number(row.cooldown_seconds), maxAttempts: Number(row.max_attempts), updatedAt: String(row.updated_at) };
+  }
+
+  saveKubernetesAgentPolicy(input: { enabled?: boolean; intervalSeconds?: number; timeoutSeconds?: number; failureThreshold?: number; cooldownSeconds?: number; maxAttempts?: number }): Record<string, unknown> {
+    const current = this.getKubernetesAgentPolicy();
+    const value = {
+      enabled: input.enabled ?? Boolean(current.enabled), intervalSeconds: input.intervalSeconds ?? Number(current.intervalSeconds),
+      timeoutSeconds: input.timeoutSeconds ?? Number(current.timeoutSeconds), failureThreshold: input.failureThreshold ?? Number(current.failureThreshold),
+      cooldownSeconds: input.cooldownSeconds ?? Number(current.cooldownSeconds), maxAttempts: input.maxAttempts ?? Number(current.maxAttempts)
+    };
+    this.db.prepare('UPDATE kubernetes_agent_policy SET enabled=?, interval_seconds=?, timeout_seconds=?, failure_threshold=?, cooldown_seconds=?, max_attempts=?, updated_at=? WHERE id=1').run(value.enabled ? 1 : 0, value.intervalSeconds, value.timeoutSeconds, value.failureThreshold, value.cooldownSeconds, value.maxAttempts, now());
+    return this.getKubernetesAgentPolicy();
+  }
+
+  upsertKubernetesAgent(agent: { agentId: string; podName?: string; namespace?: string; nodeName?: string; status: string; metadata?: unknown }): void {
+    this.db.prepare(`INSERT INTO kubernetes_agents (agent_id, pod_name, namespace, node_name, status, last_heartbeat, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET pod_name=excluded.pod_name, namespace=excluded.namespace, node_name=excluded.node_name, status=excluded.status, last_heartbeat=excluded.last_heartbeat, metadata_json=excluded.metadata_json`).run(agent.agentId, agent.podName ?? null, agent.namespace ?? null, agent.nodeName ?? null, agent.status, now(), JSON.stringify(agent.metadata ?? {}));
+  }
+
+  listKubernetesAgents(): Array<Record<string, unknown>> { return this.db.prepare('SELECT * FROM kubernetes_agents ORDER BY last_heartbeat DESC').all() as Array<Record<string, unknown>>; }
+  recordKubernetesAgentEvent(agentId: string, eventType: string, payload: unknown, incidentId?: string): void { this.db.prepare('INSERT INTO kubernetes_agent_events (agent_id, incident_id, event_type, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?)').run(agentId, incidentId ?? null, eventType, now(), JSON.stringify(payload ?? {})); }
+  listKubernetesAgentEvents(limit = 100): Array<Record<string, unknown>> { return this.db.prepare('SELECT * FROM kubernetes_agent_events ORDER BY id DESC LIMIT ?').all(Math.min(Math.max(limit, 1), 500)) as Array<Record<string, unknown>>; }
+  acquireKubernetesAgentLease(service: string, incidentId: string, ownerAgentId: string, ttlSeconds = 30): { acquired: boolean; service: string; incidentId: string; ownerAgentId: string; leaseToken?: string; expiresAt?: string } {
+    const nowValue = now();
+    const expiresAt = new Date(Date.now() + Math.min(Math.max(ttlSeconds, 10), 900) * 1000).toISOString();
+    const token = crypto.randomUUID();
+    this.db.prepare(`INSERT INTO kubernetes_agent_leases (service, incident_id, owner_agent_id, lease_token, expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(service) DO UPDATE SET incident_id=excluded.incident_id, owner_agent_id=excluded.owner_agent_id, lease_token=excluded.lease_token, expires_at=excluded.expires_at, updated_at=excluded.updated_at
+      WHERE kubernetes_agent_leases.expires_at <= ? OR (kubernetes_agent_leases.owner_agent_id = ? AND kubernetes_agent_leases.incident_id = ?)`)
+      .run(service, incidentId, ownerAgentId, token, expiresAt, nowValue, nowValue, ownerAgentId, incidentId);
+    const row = this.db.prepare('SELECT * FROM kubernetes_agent_leases WHERE service=?').get(service) as Record<string, unknown> | undefined;
+    const acquired = Boolean(row && row.owner_agent_id === ownerAgentId && row.incident_id === incidentId && row.lease_token === token);
+    return { acquired, service, incidentId: String(row?.incident_id ?? incidentId), ownerAgentId: String(row?.owner_agent_id ?? ownerAgentId), leaseToken: acquired ? token : undefined, expiresAt: String(row?.expires_at ?? expiresAt) };
+  }
+  getKubernetesAgentLease(service: string): Record<string, unknown> | undefined { return this.db.prepare('SELECT * FROM kubernetes_agent_leases WHERE service=?').get(service) as Record<string, unknown> | undefined; }
+  validateKubernetesAgentLease(service: string, incidentId: string, ownerAgentId: string, leaseToken: string): boolean {
+    const row = this.getKubernetesAgentLease(service);
+    return Boolean(row && row.incident_id === incidentId && row.owner_agent_id === ownerAgentId && row.lease_token === leaseToken && String(row.expires_at) > now());
+  }
+  releaseKubernetesAgentLease(service: string, incidentId: string, ownerAgentId: string, leaseToken: string): boolean {
+    const result = this.db.prepare('DELETE FROM kubernetes_agent_leases WHERE service=? AND incident_id=? AND owner_agent_id=? AND lease_token=?').run(service, incidentId, ownerAgentId, leaseToken);
+    return result.changes > 0;
+  }
+  listKubernetesAgentLeases(): Array<Record<string, unknown>> { return this.db.prepare('SELECT service, incident_id, owner_agent_id, expires_at, updated_at FROM kubernetes_agent_leases ORDER BY service').all() as Array<Record<string, unknown>>; }
+  createKubernetesIncident(incidentId: string, monitorId: number, service: string, error: string, metadata: unknown = {}): boolean { const result = this.db.prepare('INSERT OR IGNORE INTO kubernetes_agent_incidents (incident_id, monitor_id, service, status, failure_count, detected_at, last_error, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(incidentId, monitorId, service, 'ACTIVE', 1, now(), error.slice(0, 1000), JSON.stringify(metadata)); return result.changes > 0; }
+  getKubernetesIncident(incidentId: string): Record<string, unknown> | undefined { return this.db.prepare('SELECT * FROM kubernetes_agent_incidents WHERE incident_id=?').get(incidentId) as Record<string, unknown> | undefined; }
+  updateKubernetesIncident(incidentId: string, update: { status?: string; failureCount?: number; error?: string; recoveryAttempts?: number; recoveredAt?: string | null }): void { const row = this.getKubernetesIncident(incidentId); if (!row) return; this.db.prepare('UPDATE kubernetes_agent_incidents SET status=?, failure_count=?, last_error=?, recovery_attempts=?, recovered_at=? WHERE incident_id=?').run(update.status ?? String(row.status), update.failureCount ?? Number(row.failure_count), update.error ?? row.last_error ?? null, update.recoveryAttempts ?? Number(row.recovery_attempts), update.recoveredAt === undefined ? row.recovered_at ?? null : update.recoveredAt, incidentId); }
+  listKubernetesIncidents(limit = 100): Array<Record<string, unknown>> { return this.db.prepare('SELECT * FROM kubernetes_agent_incidents ORDER BY detected_at DESC LIMIT ?').all(Math.min(Math.max(limit, 1), 500)) as Array<Record<string, unknown>>; }
+  createKubernetesAttempt(attemptId: string, incidentId: string): void { this.db.prepare('INSERT INTO kubernetes_agent_attempts (attempt_id, incident_id, status, requested_at) VALUES (?, ?, ?, ?)').run(attemptId, incidentId, 'REQUESTED', now()); }
+  finishKubernetesAttempt(attemptId: string, status: string, error?: string, result: unknown = {}): void { this.db.prepare('UPDATE kubernetes_agent_attempts SET status=?, completed_at=?, error=?, result_json=? WHERE attempt_id=?').run(status, now(), error?.slice(0, 1000) ?? null, JSON.stringify(result), attemptId); }
 
   recordDashboardEvent(event: LiveEvent): void {
     const data = event.data;

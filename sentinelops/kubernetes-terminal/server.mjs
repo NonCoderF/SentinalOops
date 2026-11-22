@@ -1,5 +1,6 @@
 import http from 'node:http';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import pty from 'node-pty';
 import { WebSocketServer } from 'ws';
 
@@ -53,7 +54,16 @@ wss.on('connection', (client) => {
   client.on('message', (raw) => {
     try {
       const message = JSON.parse(raw.toString());
-      if (message?.type === 'input' && typeof message.data === 'string') shell.write(message.data);
+      if (message?.type === 'exec' && typeof message.command === 'string') {
+        const child = spawn('/bin/bash', ['-lc', message.command], {
+          cwd: workspace,
+          env: { ...process.env, ...(message.env && typeof message.env === 'object' ? message.env : {}) },
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        child.stdout.on('data', (data) => { if (client.readyState === 1) client.send(data.toString()); });
+        child.stderr.on('data', (data) => { if (client.readyState === 1) client.send(data.toString()); });
+        child.on('close', (code, signal) => { if (client.readyState === 1) client.send(JSON.stringify({ type: 'exec-exit', code: code ?? 1, signal: signal ?? null })); });
+      } else if (message?.type === 'input' && typeof message.data === 'string') shell.write(message.data);
       else if (message?.type === 'resize' && Number.isInteger(message.cols) && Number.isInteger(message.rows)) shell.resize(Math.max(20, Math.min(240, message.cols)), Math.max(5, Math.min(100, message.rows)));
     } catch {
       // The terminal protocol is JSON-only; ignore malformed frames.
