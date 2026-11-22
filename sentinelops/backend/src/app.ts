@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+﻿import crypto from 'node:crypto';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -10,6 +10,11 @@ import { sendAlertEmail, sendTestEmail, validateEmail } from './email.js';
 import { toAlertEvent, type AlertEvent } from './streaming.js';
 import { EventHub } from './events.js';
 import { controlContainer } from './recovery-controller.js';
+import { ReadonlyKubernetesCommandRunner, readonlyCommands, type ReadonlyCommand } from './kubernetes-readonly.js';
+import { readTestServiceStatus } from './test-service-status.js';
+import { RecoveryModeManager, type RecoveryModeName } from './recovery-mode.js';
+import websocket from '@fastify/websocket';
+import { registerTerminalBridge } from './terminal-bridge.js';
 
 interface AlertmanagerPayload {
   alerts: IncomingAlert[];
@@ -346,7 +351,7 @@ async function dashboardData(range: string, db: AlertDatabase) {
   const finished = executions.filter((run) => ['SUCCESS', 'FAILED', 'TIMED_OUT'].includes(String(run.status)));
   const durations = finished.map((run) => run.completed_at && run.started_at ? new Date(String(run.completed_at)).getTime() - new Date(String(run.started_at)).getTime() : 0).filter((value) => value > 0);
   const journal = db.dashboardEvents({ limit: 200 });
-  const activity = journal.map((event) => { let metadata: Record<string, unknown> = {}; try { metadata = JSON.parse(String(event.metadata_json)) as Record<string, unknown>; } catch { /* old/corrupt metadata is displayed without detail */ } return { id: String(event.event_id), type: String(event.event_type), label: `${String(event.event_type).toUpperCase()} · ${String(event.status ?? 'RECORDED')}`, detail: `${String(event.service_id ?? 'unknown service')} · ${String(metadata.alertName ?? metadata.actionType ?? metadata.subject ?? '')}`.trim(), at: String(event.occurred_at), incidentId: event.incident_id, severity: event.severity, status: event.status, metadata }; });
+  const activity = journal.map((event) => { let metadata: Record<string, unknown> = {}; try { metadata = JSON.parse(String(event.metadata_json)) as Record<string, unknown>; } catch { /* old/corrupt metadata is displayed without detail */ } return { id: String(event.event_id), type: String(event.event_type), label: `${String(event.event_type).toUpperCase()} Â· ${String(event.status ?? 'RECORDED')}`, detail: `${String(event.service_id ?? 'unknown service')} Â· ${String(metadata.alertName ?? metadata.actionType ?? metadata.subject ?? '')}`.trim(), at: String(event.occurred_at), incidentId: event.incident_id, severity: event.severity, status: event.status, metadata }; });
   const resolved = alerts.filter((alert) => alert.status === 'resolved' && alert.resolvedAt);
   const incidentDurations = resolved.map((alert) => new Date(alert.resolvedAt as string).getTime() - new Date(alert.firstSeenAt).getTime()).filter((value) => value >= 0);
   const mttd = null;
@@ -516,7 +521,8 @@ async function runRecovery(executionId: number, runbook: RecoveryRunbook, db: Al
   }
 }
 
-function triggerAutomaticRecovery(alert: IncomingAlert, db: AlertDatabase, events?: EventHub): void {
+function triggerAutomaticRecovery(alert: IncomingAlert, db: AlertDatabase, events?: EventHub, recoveryMode?: RecoveryModeManager): void {
+  if (recoveryMode && !recoveryMode.isActive('MANUAL')) return;
   if (alert.status !== 'firing' || !alert.labels.service) return;
   const runbook = db.listRunbooks().find((candidate) => candidate.enabled && candidate.mode === 'AUTOMATIC' && candidate.service === alert.labels.service);
   if (!runbook || db.activeRecoveryForService(runbook.service)) return;
@@ -531,9 +537,12 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', base: { service: 'sentinelops-alert-manager' }, redact: ['req.headers.authorization', 'req.query.token', 'body.smtpPassword'] } });
   const transitionLocks = new Set<string>();
   let lastCapacityDiagnostic = '';
+  const kubernetesCommands = new ReadonlyKubernetesCommandRunner();
+  const recoveryMode = new RecoveryModeManager(db);
 
   void app.register(cors, { origin: ['http://localhost:3005', 'http://127.0.0.1:3005'] });
   void app.register(rateLimit, { global: false });
+  void app.register(websocket);
 
   const requireAdmin = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!authEnabled) return;
@@ -541,6 +550,15 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
       return reply.code(401).send({ error: 'Authentication required' });
     }
   };
+
+  void app.register(async (terminalScope) => {
+    registerTerminalBridge(terminalScope, {
+      authEnabled,
+      adminToken,
+      terminalUrl: process.env.KUBERNETES_TERMINAL_URL,
+      terminalToken: process.env.KUBERNETES_TERMINAL_TOKEN ?? 'local-terminal-token'
+    });
+  });
 
   app.get('/health', async () => ({ status: 'ok', service: 'sentinelops-alert-manager', uptime: process.uptime() }));
   app.get('/ready', async (_request, reply) => {
@@ -669,6 +687,50 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     request.raw.once('close', cleanup);
   });
 
+  app.get('/api/kubernetes/config', { preHandler: requireAdmin }, async () => ({
+    context: kubernetesCommands.context,
+    namespace: kubernetesCommands.namespace,
+    commands: readonlyCommands
+  }));
+  app.get('/api/test-service/status', { preHandler: requireAdmin }, async () => readTestServiceStatus());
+  app.get('/api/kubernetes/commands', { preHandler: requireAdmin }, async () => ({ operations: kubernetesCommands.list() }));
+  app.get('/api/kubernetes/commands/:id', { preHandler: requireAdmin }, async (request, reply) => {
+    const operation = kubernetesCommands.get(String((request.params as { id: string }).id));
+    return operation ? { operation } : reply.code(404).send({ error: 'Kubernetes command operation not found' });
+  });
+  app.post('/api/kubernetes/commands/:id/cancel', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = String((request.params as { id: string }).id);
+    return kubernetesCommands.cancel(id) ? { status: 'CANCEL_REQUESTED', operationId: id } : reply.code(409).send({ error: 'Command is not running or cannot be canceled' });
+  });
+  app.post('/api/kubernetes/commands', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = request.body as { command?: unknown; commandLine?: unknown } | undefined;
+    if (typeof body?.commandLine === 'string') {
+      try { return reply.code(202).send({ operation: kubernetesCommands.startInteractive(body.commandLine) }); }
+      catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Unsupported read-only command' }); }
+    }
+    if (typeof body?.command !== 'string' || !readonlyCommands.includes(body.command as typeof readonlyCommands[number])) {
+      return reply.code(400).send({ error: 'Unsupported read-only Kubernetes command' });
+    }
+    return reply.code(202).send({ operation: kubernetesCommands.start(body.command as typeof readonlyCommands[number]) });
+  });
+  app.get('/api/kubernetes/commands/:id/stream', async (request, reply) => {
+    const id = String((request.params as { id: string }).id);
+    const operation = kubernetesCommands.get(id);
+    if (!operation) return reply.code(404).send({ error: 'Kubernetes command operation not found' });
+    if (authEnabled && (!tokenFromRequest(request) || !safeEqual(tokenFromRequest(request) as string, adminToken))) return reply.code(401).send({ error: 'Authentication required' });
+    reply.hijack();
+    const response = reply.raw;
+    response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    const send = (event: { type: string; timestamp: string; data: Record<string, unknown> }) => { if (!response.destroyed) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); };
+    send({ type: 'start', timestamp: operation.startedAt, data: { operation } });
+    if (operation.stdout) send({ type: 'stdout', timestamp: operation.startedAt, data: { text: operation.stdout } });
+    if (operation.stderr) send({ type: 'stderr', timestamp: operation.startedAt, data: { text: operation.stderr } });
+    if (operation.status !== 'RUNNING') send({ type: 'complete', timestamp: operation.completedAt ?? new Date().toISOString(), data: { operation } });
+    const unsubscribe = operation.status === 'RUNNING' ? kubernetesCommands.subscribe(id, send) : () => undefined;
+    const heartbeat = setInterval(() => { if (!response.destroyed) response.write(': heartbeat\n\n'); }, 15000);
+    request.raw.once('close', () => { clearInterval(heartbeat); unsubscribe(); });
+  });
+
   app.post('/api/webhooks/alertmanager', async (request, reply) => {
     if (authEnabled && (!tokenFromRequest(request) || !safeEqual(tokenFromRequest(request) as string, webhookToken))) return reply.code(401).send({ error: 'Invalid webhook authorization' });
     const payload = parseAlertmanagerPayload(request.body);
@@ -691,7 +753,7 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
         const result = db.upsertAlert(alert);
         accepted += 1;
         if (result.transitioned) {
-          triggerAutomaticRecovery(alert, db, events);
+          triggerAutomaticRecovery(alert, db, events, recoveryMode);
           events?.publish(alert.status === 'firing' ? 'incident' : 'recovery', {
             fingerprint: alert.fingerprint,
             status: alert.status.toUpperCase(),
@@ -794,8 +856,9 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
 
   app.get('/api/recovery/mode', { preHandler: requireAdmin }, async (request) => {
     const application = typeof (request.query as { application?: unknown }).application === 'string' ? String((request.query as { application: string }).application) : 'test-service';
-    const mode = db.getRecoveryControllerMode(application);
-    return { ...mode, mode: mode.mode === 'MANUAL' ? 'MANUAL' : 'UNKNOWN', runtime: mode.mode === 'MANUAL' ? mode.runtime : 'unknown', requestedMode: mode.mode, verified: mode.mode === 'MANUAL', kubernetes: { context: null, namespace: null } };
+    if (application !== 'test-service') return { ...db.getRecoveryControllerMode(application), requestedMode: db.getRecoveryControllerMode(application).mode, verified: true };
+    const mode = recoveryMode.current();
+    return { ...mode, requestedMode: mode.mode, verified: true, kubernetes: { context: process.env.KUBERNETES_CONTEXT ?? 'kind-sentinelops-dev', namespace: process.env.KUBERNETES_NAMESPACE ?? 'sentinelops-test' } };
   });
 
   app.get('/api/recovery/operations', { preHandler: requireAdmin }, async (request) => ({ operations: db.recoveryOperations(typeof (request.query as { application?: unknown }).application === 'string' ? String((request.query as { application: string }).application) : undefined) }));
@@ -803,16 +866,19 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
   app.post('/api/recovery/mode', { preHandler: requireAdmin }, async (request, reply) => {
     const body = request.body as { application?: unknown; mode?: unknown };
     const application = typeof body?.application === 'string' && body.application.trim() ? body.application.trim() : 'test-service';
-    if (body?.mode !== 'MANUAL') return reply.code(409).send({ error: 'Kubernetes recovery has been removed. Only Manual Runbook recovery is available.' });
-    const previous = db.getRecoveryControllerMode(application);
-    db.setRecoveryControllerMode(application, 'MANUAL', 'docker-compose', 'MANUAL_ACTIVE', 'Manual Runbook recovery is active.');
-    return { status: 'SUCCESS', mode: 'MANUAL', previous, controller: db.getRecoveryControllerMode(application) };
+    if (application !== 'test-service' || (body?.mode !== 'MANUAL' && body?.mode !== 'KUBERNETES')) return reply.code(400).send({ error: 'Only MANUAL or KUBERNETES modes are supported for test-service' });
+    try {
+      const result = recoveryMode.switchTo(body.mode as RecoveryModeName);
+      return { status: 'SUCCESS', mode: result.current.mode, previous: result.previous, controller: result.current, generation: result.generation };
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : 'Recovery mode transition failed' });
+    }
   });
   app.get('/api/recovery/runbooks',{preHandler:requireAdmin},async()=>({runbooks:db.listRunbooks(),executionEnabled:Boolean(process.env.RECOVERY_CONTROLLER_URL && process.env.RECOVERY_ALLOWED_SERVICE),executionMessage:'Docker recovery is available only for the explicitly configured recovery service.'}));
   app.post('/api/recovery/runbooks',{preHandler:requireAdmin},async(request,reply)=>{const parsed=parseRunbook(request.body);if(!parsed.value)return reply.code(400).send({error:parsed.error});return{runbook:db.saveRunbook(parsed.value)};});
   app.put('/api/recovery/runbooks/:id',{preHandler:requireAdmin},async(request,reply)=>{const id=Number((request.params as {id:string}).id);if(!db.getRunbook(id))return reply.code(404).send({error:'Runbook not found'});const parsed=parseRunbook(request.body);if(!parsed.value)return reply.code(400).send({error:parsed.error});return{runbook:db.saveRunbook(parsed.value,id)};});
   app.get('/api/recovery/executions',{preHandler:requireAdmin},async()=>({executions:db.recoveryExecutions()}));
-  app.post('/api/recovery/runbooks/:id/execute',{preHandler:requireAdmin},async(request,reply)=>{const runbook=db.getRunbook(Number((request.params as {id:string}).id));if(!runbook||!runbook.enabled)return reply.code(404).send({error:'Enabled runbook not found'});if(runbook.mode!=='MANUAL')return reply.code(409).send({error:'Automatic runbooks must be triggered by an active incident'});if(db.activeRecoveryForService(runbook.service))return reply.code(409).send({error:'A recovery attempt is already running for this service'});const executionId=db.createRecoveryExecution(runbook,'MANUAL','Approved manually from the Recovery panel.');events?.publish('recovery',{executionId,runbookId:runbook.id,status:'RUNNING',service:runbook.service,actionType:runbook.actionType});void runRecovery(executionId,runbook,db,events);return reply.code(202).send({status:'started',executionId});});
+  app.post('/api/recovery/runbooks/:id/execute',{preHandler:requireAdmin},async(request,reply)=>{const runbook=db.getRunbook(Number((request.params as {id:string}).id));if(!recoveryMode.isActive('MANUAL'))return reply.code(409).send({error:'Manual Recovery is disabled while Kubernetes Recovery is active'});if(!runbook||!runbook.enabled)return reply.code(404).send({error:'Enabled runbook not found'});if(runbook.mode!=='MANUAL')return reply.code(409).send({error:'Automatic runbooks must be triggered by an active incident'});if(db.activeRecoveryForService(runbook.service))return reply.code(409).send({error:'A recovery attempt is already running for this service'});const executionId=db.createRecoveryExecution(runbook,'MANUAL','Approved manually from the Recovery panel.');events?.publish('recovery',{executionId,runbookId:runbook.id,status:'RUNNING',service:runbook.service,actionType:runbook.actionType});void runRecovery(executionId,runbook,db,events);return reply.code(202).send({status:'started',executionId});});
 
 
   app.post('/api/recovery/:fingerprint/request', { preHandler: requireAdmin }, async (request, reply) => {
@@ -841,3 +907,4 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
   void syncPrometheusTargets(db).catch(() => undefined);
   return app;
 }
+

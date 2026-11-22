@@ -59,7 +59,7 @@ export interface StreamEventRecord {
 export type RecoveryActionType = 'RESTART_CONTAINER' | 'START_CONTAINER' | 'CHECK_CONTAINER_STATUS' | 'HTTP_HEALTH_CHECK';
 export type DockerControllerAction = 'START_CONTAINER' | 'RESTART_CONTAINER' | 'CHECK_CONTAINER_STATUS' | 'STOP_CONTAINER';
 export type RecoveryMode = 'MANUAL' | 'AUTOMATIC';
-export type RecoveryControllerMode = 'MANUAL';
+export type RecoveryControllerMode = 'MANUAL' | 'KUBERNETES';
 export interface RecoveryRunbook { id:number; name:string; description:string; service:string; actionType:RecoveryActionType; parameters:Record<string,string>; timeoutSeconds:number; verificationEndpoint:string; maxAttempts:number; cooldownSeconds:number; mode:RecoveryMode; enabled:boolean; createdAt:string; updatedAt:string; }
 export type EndpointNetworkScope = 'external' | 'host' | 'docker';
 export interface MonitoredEndpoint { id:number; applicationName:string; endpointUrl:string; probeUrl:string; networkScope:EndpointNetworkScope; method:'GET'|'HEAD'; expectedStatus:number; intervalSeconds:number; environment:'production'|'staging'|'development'; authType:'none'|'bearer'|'basic'; enabled:boolean; createdAt:string; updatedAt:string; }
@@ -372,7 +372,10 @@ export class AlertDatabase {
   recoveryExecutions():Array<Record<string,unknown>> { return this.db.prepare('SELECT * FROM recovery_executions ORDER BY id DESC LIMIT 100').all() as Array<Record<string,unknown>>; }
   getRecoveryControllerMode(application: string): { application: string; mode: RecoveryControllerMode; runtime: string; state: string; reason: string; updatedAt: string } {
     const row = this.db.prepare('SELECT * FROM recovery_controller_modes WHERE application=?').get(application) as Record<string, unknown> | undefined;
-    if (!row) return { application, mode: 'MANUAL', runtime: 'docker-compose', state: 'UNKNOWN', reason: 'No verified recovery owner has been recorded.', updatedAt: '' };
+    if (!row) {
+      this.setRecoveryControllerMode(application, 'KUBERNETES', 'kubernetes', 'KUBERNETES_ACTIVE', 'Kubernetes Recovery is the default active mode.');
+      return { application, mode: 'KUBERNETES', runtime: 'kubernetes', state: 'KUBERNETES_ACTIVE', reason: 'Kubernetes Recovery is the default active mode.', updatedAt: now() };
+    }
     return { application, mode: row.mode as RecoveryControllerMode, runtime: String(row.runtime), state: String(row.state), reason: String(row.reason), updatedAt: String(row.updated_at) };
   }
   setRecoveryControllerMode(application: string, mode: RecoveryControllerMode, runtime: string, state: string, reason = ''): void {

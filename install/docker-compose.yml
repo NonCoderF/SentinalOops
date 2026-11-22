@@ -1,4 +1,27 @@
 services:
+  kubernetes-terminal:
+    build:
+      context: ../sentinelops/kubernetes-terminal
+      dockerfile: Dockerfile
+    image: sentinelops/kubernetes-terminal:local
+    environment:
+      TERMINAL_TOKEN: ${KUBERNETES_TERMINAL_TOKEN:-local-terminal-token}
+      TERMINAL_MAX_SESSIONS: ${KUBERNETES_TERMINAL_MAX_SESSIONS:-4}
+      TERMINAL_TEST_SERVICE_PROXY: ${TERMINAL_TEST_SERVICE_PROXY:-true}
+    volumes:
+      - kubernetes_terminal_workspace:/workspace
+    # 127.0.0.1 inside this container is the container itself. Use the
+    # Docker Desktop host gateway for services published on Windows.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [sentinelops]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   sentinelops:
     build:
       context: ..
@@ -26,6 +49,8 @@ services:
       RECOVERY_ALLOWED_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-}
       RECOVERY_ALLOWED_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-}
       DASHBOARD_URL: http://localhost:${SENTINELOPS_WEB_PORT:-3005}
+      KUBERNETES_TERMINAL_URL: ws://kubernetes-terminal:8787/terminal
+      KUBERNETES_TERMINAL_TOKEN: ${KUBERNETES_TERMINAL_TOKEN:-local-terminal-token}
     volumes:
       - sentinelops_data:/var/lib/sentinelops
       - prometheus_file_sd:/etc/prometheus/file_sd
@@ -34,6 +59,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks: [sentinelops]
+    depends_on:
+      kubernetes-terminal: { condition: service_healthy }
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -120,6 +147,7 @@ services:
 
 volumes:
   sentinelops_data: { name: sentinelops_install_data }
+  kubernetes_terminal_workspace: { name: sentinelops_install_kubernetes_terminal_workspace }
   prometheus_data: { name: sentinelops_install_prometheus }
   grafana_data: { name: sentinelops_install_grafana }
   prometheus_file_sd: { name: sentinelops_install_file_sd }

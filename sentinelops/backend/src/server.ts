@@ -14,6 +14,8 @@ const webhookToken = process.env.ALERTMANAGER_WEBHOOK_TOKEN ?? '';
 const encryptionKey = process.env.SETTINGS_ENCRYPTION_KEY ?? 'local-development-encryption-key';
 
 const db = new AlertDatabase(databasePath, encryptionKey);
+// Initialize the authoritative recovery owner once; existing selections persist across restarts.
+db.getRecoveryControllerMode('test-service');
 const events = new EventHub((event) => db.recordDashboardEvent(event));
 const envSmtpHost = process.env.SMTP_HOST?.trim();
 if (envSmtpHost) {

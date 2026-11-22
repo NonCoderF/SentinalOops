@@ -1,0 +1,8 @@
+services:
+  kubernetes-terminal:
+    user: root
+    entrypoint: ["/usr/local/bin/docker-terminal-entrypoint.sh"]
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
