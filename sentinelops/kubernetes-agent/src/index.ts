@@ -13,6 +13,9 @@ const podName = process.env.POD_NAME;
 const namespace = process.env.POD_NAMESPACE ?? 'sentinelops';
 const nodeName = process.env.POD_NODE_NAME;
 const states = new Map<number, State>();
+// Several registered endpoints can belong to the same recoverable service. They
+// must not start concurrent recovery requests from one Agent process.
+const recoveryInFlight = new Set<string>();
 let monitoring = true;
 let lastConfig: Config | undefined;
 let trafficTimer: NodeJS.Timeout | undefined;
@@ -103,6 +106,11 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
   state.attempts += 1;
   state.lastRecoveryAt = now;
   const service = recoveryService(target);
+  if (recoveryInFlight.has(service)) {
+    states.set(target.id, state);
+    return;
+  }
+  recoveryInFlight.add(service);
   try {
     const ownership = await request('/api/kubernetes/agent/lease/acquire', { method: 'POST', body: JSON.stringify({ agentId, service, incidentId: state.incidentId, ttlSeconds: Math.min(900, Math.max(120, policy.cooldownSeconds + 60)) }) });
     if (!ownership.ok) {
@@ -128,6 +136,8 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
     await sendEvent('recovery.started', target, state, { attempt: state.attempts });
   } catch (error) {
     await sendEvent('recovery.failed', target, state, { attempt: state.attempts, error: error instanceof Error ? error.message : 'Recovery request failed' });
+  } finally {
+    recoveryInFlight.delete(service);
   }
   state.leaseToken = undefined;
   states.set(target.id, state);

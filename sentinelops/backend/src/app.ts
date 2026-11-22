@@ -989,6 +989,7 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     if (kubernetesRecoveryLocks.has(service) || db.activeRecoveryForService(service)) return reply.code(409).send({ error: 'A recovery attempt is already running for this service' });
     const incident = db.getKubernetesIncident(incidentId);
     if (incident?.status === 'RECOVERED') return reply.code(409).send({ error: 'Incident is already recovered' });
+    kubernetesRecoveryLocks.add(service);
     const attemptId = crypto.randomUUID();
     db.createKubernetesAttempt(attemptId, incidentId);
     db.updateKubernetesIncident(incidentId, { status: 'RECOVERING', recoveryAttempts: Number(incident?.recovery_attempts ?? 0) + 1 });
