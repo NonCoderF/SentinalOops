@@ -1,0 +1,52 @@
+/* Keep all Recovery controls consistent with the SentinelOops dark console. */
+.kubernetes-recovery input,
+.kubernetes-recovery select,
+.kubernetes-recovery textarea,
+.workspace input,
+.workspace select,
+.workspace textarea,
+.manual-form-grid input,
+.manual-form-grid select,
+.wide-field textarea {
+  min-height: 36px;
+  border: 1px solid var(--color-border, #253449);
+  border-radius: 7px;
+  background: var(--color-input, #0b1422);
+  color: var(--color-text, #f1f5f9);
+  color-scheme: dark;
+  padding: 9px 10px;
+  outline: none;
+}
+
+.kubernetes-recovery input:focus,
+.kubernetes-recovery select:focus,
+.kubernetes-recovery textarea:focus,
+.workspace input:focus,
+.workspace select:focus,
+.workspace textarea:focus,
+.manual-form-grid input:focus,
+.manual-form-grid select:focus,
+.wide-field textarea:focus {
+  border-color: var(--color-accent, #2dd4bf);
+  box-shadow: 0 0 0 3px #2dd4bf1c;
+}
+
+.kube-setup-buttons button:not(.primary),
+.workspace .button-row .secondary {
+  border: 1px solid var(--color-border, #253449);
+  border-radius: 7px;
+  background: var(--color-surface-2, #182437);
+  color: var(--color-text, #f1f5f9);
+}
+
+.kube-setup-buttons button:not(.primary):hover,
+.workspace .button-row .secondary:hover {
+  border-color: #2dd4bf88;
+  background: #1b3042;
+}
+
+.kube-setup-buttons button:disabled,
+.workspace button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}

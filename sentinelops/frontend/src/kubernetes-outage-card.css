@@ -1,0 +1,9 @@
+.kube-service-status{display:none}
+.kube-monitored-service-card .kube-service-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.kube-service-actions{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+.kube-service-actions button{border:1px solid #fb7185aa;border-radius:6px;background:#fb71851a;color:#ffb4bd;padding:8px 12px;font:700 11px "JetBrains Mono",monospace;cursor:pointer}
+.kube-service-actions button:hover:not(:disabled){background:#fb718533}
+.kube-service-actions button:disabled{cursor:not-allowed;opacity:.5}
+.kube-service-actions .muted{font-size:11px}
+@media(max-width:800px){.kube-monitored-service-card .kube-service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.kube-monitored-service-card .kube-service-grid{grid-template-columns:1fr}}

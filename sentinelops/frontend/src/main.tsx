@@ -5,6 +5,7 @@ import './kubernetes-recovery.css';
 import './recovery-tabs.css';
 import './test-service-status.css';
 import './kubernetes-terminal-input.css';
+import './recovery-form-theme.css';
 import './dashboard.css';
 import { Setup } from './setup';
 import { ApiManagement, TrafficOverview } from './api-management';

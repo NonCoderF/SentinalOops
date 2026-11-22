@@ -877,12 +877,18 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
   });
   app.post('/api/kubernetes/failure-test/stop-service', { preHandler: requireAdmin, config: { rateLimit: { max: 3, timeWindow: '10 minutes' } } }, async (_request, reply) => {
     if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery must be the active mode' });
-    const service = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
+    const service = process.env.RECOVERY_ALLOWED_SERVICE?.trim();
+    if (!service) return reply.code(503).send({ error: 'No development Test Service is explicitly allowlisted for outage testing' });
+    if (!db.getKubernetesAgentPolicy().enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
+    const lockKey = 'kubernetes-failure-test-stop-service';
+    if (transitionLocks.has(lockKey)) return reply.code(409).send({ error: 'A Test Service outage request is already in progress' });
+    transitionLocks.add(lockKey);
     try {
       const result = await controlContainer('STOP_CONTAINER', service, 15000);
       events?.publish('operation', { source: 'failure-testing-lab', action: 'STOP_TEST_SERVICE', service, result });
-      return { status: 'stopped', service, result };
+      return { status: 'stopped', service, targetContainer: service, result };
     } catch (error) { return reply.code(502).send({ error: error instanceof Error ? error.message : 'Test Service stop failed' }); }
+    finally { transitionLocks.delete(lockKey); }
   });
   app.post('/api/kubernetes/setup/:operation', { preHandler: requireAdmin, config: { rateLimit: { max: 30, timeWindow: '10 minutes' } } }, async (request, reply) => {
     const allowed: KubernetesSetupOperation[] = ['create-cluster', 'check-cluster', 'create-namespace', 'deploy-agent', 'check-agent-pods', 'agent-logs', 'delete-agent-pod', 'scale-agents-zero', 'delete-cluster', 'inspect-node', 'stop-worker', 'start-worker'];
