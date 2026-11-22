@@ -57,7 +57,9 @@ export interface StreamEventRecord {
 }
 
 export type RecoveryActionType = 'RESTART_CONTAINER' | 'START_CONTAINER' | 'CHECK_CONTAINER_STATUS' | 'HTTP_HEALTH_CHECK';
+export type DockerControllerAction = 'START_CONTAINER' | 'RESTART_CONTAINER' | 'CHECK_CONTAINER_STATUS' | 'STOP_CONTAINER';
 export type RecoveryMode = 'MANUAL' | 'AUTOMATIC';
+export type RecoveryControllerMode = 'MANUAL';
 export interface RecoveryRunbook { id:number; name:string; description:string; service:string; actionType:RecoveryActionType; parameters:Record<string,string>; timeoutSeconds:number; verificationEndpoint:string; maxAttempts:number; cooldownSeconds:number; mode:RecoveryMode; enabled:boolean; createdAt:string; updatedAt:string; }
 export type EndpointNetworkScope = 'external' | 'host' | 'docker';
 export interface MonitoredEndpoint { id:number; applicationName:string; endpointUrl:string; probeUrl:string; networkScope:EndpointNetworkScope; method:'GET'|'HEAD'; expectedStatus:number; intervalSeconds:number; environment:'production'|'staging'|'development'; authType:'none'|'bearer'|'basic'; enabled:boolean; createdAt:string; updatedAt:string; }
@@ -225,6 +227,27 @@ export class AlertDatabase {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS recovery_controller_modes (
+        application TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        runtime TEXT NOT NULL,
+        state TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS recovery_operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        runtime TEXT NOT NULL,
+        trigger TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        duration_ms INTEGER,
+        error TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
       CREATE TABLE IF NOT EXISTS monitored_endpoints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_name TEXT NOT NULL,
@@ -347,6 +370,27 @@ export class AlertDatabase {
   activeRecoveryForService(service:string):boolean { return Number((this.db.prepare("SELECT COUNT(*) AS count FROM recovery_executions WHERE service=? AND status IN ('RUNNING','PENDING')").get(service) as {count:number}).count)>0; }
   finishRecoveryExecution(id:number,status:'SUCCESS'|'FAILED'|'TIMED_OUT',output:string):void { this.db.prepare('UPDATE recovery_executions SET status=?,output=?,completed_at=? WHERE id=?').run(status,output.slice(0,10000),now(),id); }
   recoveryExecutions():Array<Record<string,unknown>> { return this.db.prepare('SELECT * FROM recovery_executions ORDER BY id DESC LIMIT 100').all() as Array<Record<string,unknown>>; }
+  getRecoveryControllerMode(application: string): { application: string; mode: RecoveryControllerMode; runtime: string; state: string; reason: string; updatedAt: string } {
+    const row = this.db.prepare('SELECT * FROM recovery_controller_modes WHERE application=?').get(application) as Record<string, unknown> | undefined;
+    if (!row) return { application, mode: 'MANUAL', runtime: 'docker-compose', state: 'UNKNOWN', reason: 'No verified recovery owner has been recorded.', updatedAt: '' };
+    return { application, mode: row.mode as RecoveryControllerMode, runtime: String(row.runtime), state: String(row.state), reason: String(row.reason), updatedAt: String(row.updated_at) };
+  }
+  setRecoveryControllerMode(application: string, mode: RecoveryControllerMode, runtime: string, state: string, reason = ''): void {
+    this.db.prepare(`INSERT INTO recovery_controller_modes (application, mode, runtime, state, reason, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(application) DO UPDATE SET mode=excluded.mode, runtime=excluded.runtime, state=excluded.state, reason=excluded.reason, updated_at=excluded.updated_at`).run(application, mode, runtime, state, reason, now());
+  }
+  createRecoveryOperation(application: string, mode: string, runtime: string, trigger: string, metadata: unknown = {}): number {
+    const result = this.db.prepare('INSERT INTO recovery_operations (application, mode, runtime, trigger, status, started_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)').run(application, mode, runtime, trigger, 'RUNNING', now(), JSON.stringify(metadata));
+    return Number(result.lastInsertRowid);
+  }
+  finishRecoveryOperation(id: number, status: string, error?: string): void {
+    const row = this.db.prepare('SELECT started_at FROM recovery_operations WHERE id=?').get(id) as { started_at?: string } | undefined;
+    const duration = row?.started_at ? Math.max(0, Date.now() - new Date(row.started_at).getTime()) : null;
+    this.db.prepare('UPDATE recovery_operations SET status=?, completed_at=?, duration_ms=?, error=? WHERE id=?').run(status, now(), duration, error ?? null, id);
+  }
+  recoveryOperations(application?: string): Array<Record<string, unknown>> {
+    return (application ? this.db.prepare('SELECT * FROM recovery_operations WHERE application=? ORDER BY id DESC LIMIT 100').all(application) : this.db.prepare('SELECT * FROM recovery_operations ORDER BY id DESC LIMIT 100').all()) as Array<Record<string, unknown>>;
+  }
 
   recordDashboardEvent(event: LiveEvent): void {
     const data = event.data;

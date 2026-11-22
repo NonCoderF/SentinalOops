@@ -3,7 +3,7 @@
 An independent demo API used for integration checks. It does not depend on SentinelOps, Prometheus, Grafana, or any SentinelOps volume.
 
 ```bash
-docker compose -f test-service/docker-compose.yml up -d --build
+docker compose -f up -d --build
 curl http://localhost:8080/api/health
 curl http://localhost:8080/api/users
 curl http://localhost:8080/api/products

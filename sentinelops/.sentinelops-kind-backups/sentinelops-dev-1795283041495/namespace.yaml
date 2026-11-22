@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  creationTimestamp: "2026-11-21T17:40:37Z"
+  labels:
+    kubernetes.io/metadata.name: sentinelops-test
+    name: sentinelops-test
+  name: sentinelops-test
+  resourceVersion: "658"
+  uid: a7fc4ca7-4180-407a-8f3e-2f11442e042b
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active

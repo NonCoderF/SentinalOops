@@ -1,0 +1,55 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  data:
+    ca.crt: |
+      -----BEGIN CERTIFICATE-----
+      MIIDBTCCAe2gAwIBAgIIVW0df4+JNxcwDQYJKoZIhvcNAQELBQAwFTETMBEGA1UE
+      AxMKa3ViZXJuZXRlczAeFw0yNjExMjEwNzUzMDRaFw0zNjExMTgwNzU4MDRaMBUx
+      EzARBgNVBAMTCmt1YmVybmV0ZXMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+      AoIBAQDVn/q0JqXaLJvDd2XW3keitalbZg8FbIjDKZq7H2+IYpp/+AiyYesVpDmV
+      4maVunklBBUT5vWYawppfUb8kYZSIdwELm+gM6zAfNOvINO+8VwUs41D+59t3Xqr
+      ZTVNt+ECb9vMunuUAcnZhodkoIPlICciYcK59EKrVTCPs+V3eEFXDP2JvhhF7nRK
+      QMcHI6ZOmuuUYc+beYXLDKngvAOu744j2TwOP2IQjyKvp3jtlvq8uJ41KQ6XyN5j
+      3CkmZD6co/BdmVKVsVPr7Fzh6Bi5UItaEb17UPtFC82ozimu6YFTWdzIRrYV7ndh
+      1uE4l/UdSScTnko8dPg3IZSut6zLAgMBAAGjWTBXMA4GA1UdDwEB/wQEAwICpDAP
+      BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTjHqh70JHEMr7iodv3oR7KSm6P0jAV
+      BgNVHREEDjAMggprdWJlcm5ldGVzMA0GCSqGSIb3DQEBCwUAA4IBAQAfO9C606/X
+      jPbtig6fsxjEuYmbqsYNCNKPO3d0wO7UsC9r32VHoAhJKO4vDzeU/lGF+uBDQnCN
+      ZavOxkR9oaHNcL892rl7dkP2xG7GREdOIpSOZ69/+XRvLmypvDQ20qMPq9byOwpb
+      qAoTYkZjMfF/6DIW8H0jIyzOLlpIn5xFdjvBuyvr0yKPRP46brasVqmIHHCIjpTC
+      7kBvTlyVeUO0PBnKw1u8rx/zwzrypX1qpD+l/4kTJS31G3l2Alo08aGseDOmso1L
+      LWxguoeAB35UemCdduWEE4pF4nlTwMwDQLE4uDWXF+kmfYqvg5XS2SGn1KxUC7Vx
+      Vbf/1pOAATsi
+      -----END CERTIFICATE-----
+  kind: ConfigMap
+  metadata:
+    annotations:
+      kubernetes.io/description: Contains a CA bundle that can be used to verify the
+        kube-apiserver when using internal endpoints such as the internal service
+        IP or kubernetes.default.svc. No other usage is guaranteed across distributions
+        of Kubernetes clusters.
+    creationTimestamp: "2026-11-21T09:20:50Z"
+    name: kube-root-ca.crt
+    namespace: sentinelops-test
+    resourceVersion: "3569"
+    uid: b794ee37-3029-4ea7-ab5c-8f4cd60b2549
+- apiVersion: v1
+  data:
+    HOST: 0.0.0.0
+    PORT: "8080"
+  kind: ConfigMap
+  metadata:
+    annotations:
+      meta.helm.sh/release-name: sentinelops-test-service
+      meta.helm.sh/release-namespace: sentinelops-test
+    creationTimestamp: "2026-11-21T09:20:50Z"
+    labels:
+      app.kubernetes.io/managed-by: Helm
+    name: sentinelops-test-service
+    namespace: sentinelops-test
+    resourceVersion: "3572"
+    uid: 6cb3d7d0-7b20-4e19-956f-01110f57e40f
+kind: List
+metadata:
+  resourceVersion: ""

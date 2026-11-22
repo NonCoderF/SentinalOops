@@ -53,6 +53,8 @@ await app.register(fastifyStatic, {
 app.get('/setup', async (_request, reply) => reply.sendFile('index.html'));
 app.get('/apis', async (_request, reply) => reply.sendFile('index.html'));
 app.get('/traffic', async (_request, reply) => reply.sendFile('index.html'));
+app.get('/recovery', async (_request, reply) => reply.redirect('/recovery/manual'));
+app.get('/recovery/manual', async (_request, reply) => reply.sendFile('index.html'));
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutdown requested');

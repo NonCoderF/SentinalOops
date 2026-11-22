@@ -1,0 +1,20 @@
+{
+  "backupId": "sentinelops-dev-1795282776059",
+  "clusterName": "sentinelops-dev",
+  "context": "kind-sentinelops-dev",
+  "namespace": "sentinelops-test",
+  "deployment": "sentinelops-test-service",
+  "service": "sentinelops-test-service",
+  "capturedAt": "2026-11-21T17:39:38.280Z",
+  "clusterExists": true,
+  "files": [
+    "cluster-nodes.yaml",
+    "namespace.yaml",
+    "deployment.yaml",
+    "service.yaml",
+    "configmaps.yaml",
+    "endpointslices.yaml",
+    "helm-releases.json"
+  ],
+  "secrets": "Secret values are intentionally not exported. Restore requires configured Helm values or an operator-managed secret backup."
+}

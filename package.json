@@ -13,7 +13,7 @@
     "build:receiver": "tsc -p sentinelops/alert-receiver/tsconfig.json",
     "build:backend": "tsc -p sentinelops/backend/tsconfig.json",
     "build:recovery-controller": "tsc -p sentinelops/recovery-controller/tsconfig.json",
-    "build:frontend": "vite build --config sentinelops/frontend/vite.config.ts",
+    "build:frontend": "vite build --config sentinelops/frontend/vite.config.ts --configLoader runner",
     "dev:frontend": "vite --config sentinelops/frontend/vite.config.ts",
     "loadtest": "tsx load-testing/src/cli.ts",
     "start": "node test-service/dist/src/server.js",

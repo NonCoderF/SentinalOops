@@ -1,4 +1,4 @@
-export type LiveEventType = 'incident' | 'recovery' | 'notification' | 'heartbeat' | 'traffic';
+export type LiveEventType = 'incident' | 'recovery' | 'notification' | 'heartbeat' | 'traffic' | 'operation';
 
 export interface LiveEvent {
   type: LiveEventType;

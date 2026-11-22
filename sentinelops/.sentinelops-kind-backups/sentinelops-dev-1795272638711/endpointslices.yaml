@@ -1,0 +1,73 @@
+apiVersion: v1
+items:
+- addressType: IPv4
+  apiVersion: discovery.k8s.io/v1
+  endpoints:
+  - addresses:
+    - 10.244.0.19
+    conditions:
+      ready: true
+      serving: true
+      terminating: false
+    nodeName: sentinelops-dev-control-plane
+    targetRef:
+      kind: Pod
+      name: sentinelops-test-service-c57f486d5-zdrll
+      namespace: sentinelops-test
+      uid: 9a2d3dbd-e27e-49ea-827d-088c697ae0b1
+  - addresses:
+    - 10.244.0.22
+    conditions:
+      ready: true
+      serving: true
+      terminating: false
+    nodeName: sentinelops-dev-control-plane
+    targetRef:
+      kind: Pod
+      name: sentinelops-test-service-c57f486d5-zw8lc
+      namespace: sentinelops-test
+      uid: 60e62e8f-e7d3-40e4-8995-2cb5582990ab
+  - addresses:
+    - 10.244.0.25
+    conditions:
+      ready: true
+      serving: true
+      terminating: false
+    nodeName: sentinelops-dev-control-plane
+    targetRef:
+      kind: Pod
+      name: sentinelops-test-service-c57f486d5-6nzf6
+      namespace: sentinelops-test
+      uid: 2664be38-c4db-45a4-86f4-0841c87e9e23
+  kind: EndpointSlice
+  metadata:
+    annotations:
+      endpoints.kubernetes.io/last-change-trigger-time: "2026-11-21T14:45:39Z"
+    creationTimestamp: "2026-11-21T09:20:51Z"
+    generateName: sentinelops-test-service-
+    generation: 79
+    labels:
+      app.kubernetes.io/instance: sentinelops-test-service
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: sentinelops-test-service
+      endpointslice.kubernetes.io/managed-by: endpointslice-controller.k8s.io
+      kubernetes.io/service-name: sentinelops-test-service
+      sentinelops.io/recovery-scope: lab
+    name: sentinelops-test-service-vr66f
+    namespace: sentinelops-test
+    ownerReferences:
+    - apiVersion: v1
+      blockOwnerDeletion: true
+      controller: true
+      kind: Service
+      name: sentinelops-test-service
+      uid: e0a13e21-a4a4-42b6-8cca-a8deff076c8f
+    resourceVersion: "17062"
+    uid: 66845cb8-4b66-4cf2-a8dd-e2d2fe12dbc7
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+kind: List
+metadata:
+  resourceVersion: ""

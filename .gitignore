@@ -10,3 +10,4 @@ load-testing/reports/*
 load-testing/state/*
 !load-testing/state/.gitkeep
 .vscode/
+/install/kubeconfig

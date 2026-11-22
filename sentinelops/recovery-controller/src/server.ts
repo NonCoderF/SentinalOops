@@ -6,7 +6,7 @@ const project = process.env.ALLOWED_COMPOSE_PROJECT ?? 'sentinelops';
 const allowedService = process.env.ALLOWED_RECOVERY_SERVICE?.trim() ?? '';
 const allowedImage = process.env.ALLOWED_RECOVERY_IMAGE?.trim() ?? '';
 
-type Action = 'START_CONTAINER' | 'RESTART_CONTAINER' | 'CHECK_CONTAINER_STATUS';
+type Action = 'START_CONTAINER' | 'RESTART_CONTAINER' | 'CHECK_CONTAINER_STATUS' | 'STOP_CONTAINER';
 
 function json(response: http.ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -51,7 +51,7 @@ async function inspectAllowedContainer(): Promise<{ id: string; state: string; h
 async function perform(action: Action): Promise<Record<string, unknown>> {
   const before = await inspectAllowedContainer();
   if (action === 'CHECK_CONTAINER_STATUS') return { action, containerId: before.id.slice(0, 12), state: before.state, health: before.health ?? 'unavailable' };
-  const endpoint = action === 'START_CONTAINER' ? `/containers/${before.id}/start` : `/containers/${before.id}/restart?t=10`;
+  const endpoint = action === 'START_CONTAINER' ? `/containers/${before.id}/start` : action === 'STOP_CONTAINER' ? `/containers/${before.id}/stop?t=10` : `/containers/${before.id}/restart?t=10`;
   const result = await dockerRequest(endpoint, 'POST');
   if (![204, 304].includes(result.status)) throw new Error(`Docker ${action} failed with status ${result.status}`);
   const after = await inspectAllowedContainer();
@@ -70,7 +70,7 @@ const server = http.createServer(async (request, response) => {
   request.on('end', async () => {
     try {
       const parsed = JSON.parse(body) as { service?: unknown; action?: unknown };
-      if (parsed.service !== allowedService || !['START_CONTAINER', 'RESTART_CONTAINER', 'CHECK_CONTAINER_STATUS'].includes(String(parsed.action))) return json(response, 400, { error: 'Only the configured recovery service and actions are permitted' });
+      if (parsed.service !== allowedService || !['START_CONTAINER', 'RESTART_CONTAINER', 'CHECK_CONTAINER_STATUS', 'STOP_CONTAINER'].includes(String(parsed.action))) return json(response, 400, { error: 'Only the configured recovery service and actions are permitted' });
       return json(response, 200, await perform(parsed.action as Action));
     } catch (error) { return json(response, 502, { error: error instanceof Error ? error.message : 'Recovery controller failed' }); }
   });

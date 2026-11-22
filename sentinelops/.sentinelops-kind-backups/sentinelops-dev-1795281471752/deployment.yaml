@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    meta.helm.sh/release-name: sentinelops-test-service
+    meta.helm.sh/release-namespace: sentinelops-test
+  creationTimestamp: "2026-11-21T15:21:54Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sentinelops-test-service
+  name: sentinelops-test-service
+  namespace: sentinelops-test
+  resourceVersion: "8282"
+  uid: bc331e63-29bc-4f1f-971f-2775b75b13f4
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 3
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sentinelops-test-service
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sentinelops-test-service
+    spec:
+      containers:
+      - image: sentinelops/test-service:local
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: test-service
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: 250m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-11-21T15:21:54Z"
+    lastUpdateTime: "2026-11-21T15:22:05Z"
+    message: ReplicaSet "sentinelops-test-service-67877b7ffc" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2026-11-21T17:16:08Z"
+    lastUpdateTime: "2026-11-21T17:16:08Z"
+    message: Deployment does not have minimum availability.
+    reason: MinimumReplicasUnavailable
+    status: "False"
+    type: Available
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 3
+  terminatingReplicas: 0
+  unavailableReplicas: 2
+  updatedReplicas: 3

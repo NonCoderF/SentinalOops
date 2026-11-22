@@ -1,0 +1,886 @@
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:37Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-control-plane
+      kubernetes.io/os: linux
+      node-role.kubernetes.io/control-plane: ""
+      node.kubernetes.io/exclude-from-external-load-balancers: ""
+    name: sentinelops-dev-control-plane
+    resourceVersion: "1371"
+    uid: 848ce837-6602-4984-a3fc-92cbd50e22d6
+  spec:
+    podCIDR: 10.244.0.0/24
+    podCIDRs:
+    - 10.244.0.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-control-plane
+    taints:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+  status:
+    addresses:
+    - address: 172.19.0.6
+      type: InternalIP
+    - address: sentinelops-dev-control-plane
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:35:45Z"
+      lastTransitionTime: "2026-11-21T17:30:35Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:45Z"
+      lastTransitionTime: "2026-11-21T17:30:35Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:45Z"
+      lastTransitionTime: "2026-11-21T17:30:35Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:45Z"
+      lastTransitionTime: "2026-11-21T17:31:01Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037405
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82822887
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62689371
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: e1ed25ec22934d31b6b642510ac3a67b
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: e1ed25ec22934d31b6b642510ac3a67b
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:51Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-worker
+      kubernetes.io/os: linux
+    name: sentinelops-dev-worker
+    resourceVersion: "1233"
+    uid: d7429c96-4d7d-4173-b520-aa9974cd0386
+  spec:
+    podCIDR: 10.244.4.0/24
+    podCIDRs:
+    - 10.244.4.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-worker
+  status:
+    addresses:
+    - address: 172.19.0.7
+      type: InternalIP
+    - address: sentinelops-dev-worker
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:31:09Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037796
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82822887
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62689371
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: 4bae8564ca3249a89e8c353b74817656
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: 4bae8564ca3249a89e8c353b74817656
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:51Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-worker2
+      kubernetes.io/os: linux
+    name: sentinelops-dev-worker2
+    resourceVersion: "1275"
+    uid: 85eabc83-f5e2-4976-aa41-3fd9146d3b69
+  spec:
+    podCIDR: 10.244.1.0/24
+    podCIDRs:
+    - 10.244.1.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-worker2
+  status:
+    addresses:
+    - address: 172.19.0.4
+      type: InternalIP
+    - address: sentinelops-dev-worker2
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:34:56Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:56Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:56Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:56Z"
+      lastTransitionTime: "2026-11-21T17:31:06Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037405
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82823264
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62688989
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: 00629787f1c544bcaff3e57fe3e413c5
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: 00629787f1c544bcaff3e57fe3e413c5
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:51Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-worker3
+      kubernetes.io/os: linux
+    name: sentinelops-dev-worker3
+    resourceVersion: "1357"
+    uid: f0ca0c28-a9d4-4de9-a883-d93c1c1f3f7b
+  spec:
+    podCIDR: 10.244.2.0/24
+    podCIDRs:
+    - 10.244.2.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-worker3
+  status:
+    addresses:
+    - address: 172.19.0.5
+      type: InternalIP
+    - address: sentinelops-dev-worker3
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:35:37Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:37Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:37Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:37Z"
+      lastTransitionTime: "2026-11-21T17:31:08Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037405
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82822887
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62688989
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: 8580fcd14c57497f9876d0e764b52a37
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: 8580fcd14c57497f9876d0e764b52a37
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:51Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-worker4
+      kubernetes.io/os: linux
+    name: sentinelops-dev-worker4
+    resourceVersion: "1298"
+    uid: 72729d09-2ead-43ef-bd28-a267f43933ca
+  spec:
+    podCIDR: 10.244.5.0/24
+    podCIDRs:
+    - 10.244.5.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-worker4
+  status:
+    addresses:
+    - address: 172.19.0.3
+      type: InternalIP
+    - address: sentinelops-dev-worker4
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:35:07Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:07Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:07Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:35:07Z"
+      lastTransitionTime: "2026-11-21T17:31:06Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037405
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82822887
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62688989
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: 3a89549930be42d79fb4d3de632cec5d
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: 3a89549930be42d79fb4d3de632cec5d
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+- apiVersion: v1
+  kind: Node
+  metadata:
+    annotations:
+      node.alpha.kubernetes.io/ttl: "0"
+      volumes.kubernetes.io/controller-managed-attach-detach: "true"
+    creationTimestamp: "2026-11-21T17:30:51Z"
+    labels:
+      beta.kubernetes.io/arch: amd64
+      beta.kubernetes.io/os: linux
+      kubernetes.io/arch: amd64
+      kubernetes.io/hostname: sentinelops-dev-worker5
+      kubernetes.io/os: linux
+    name: sentinelops-dev-worker5
+    resourceVersion: "1235"
+    uid: 38122680-cb97-4cde-9d74-a891c304157d
+  spec:
+    podCIDR: 10.244.3.0/24
+    podCIDRs:
+    - 10.244.3.0/24
+    providerID: kind://docker/sentinelops-dev/sentinelops-dev-worker5
+  status:
+    addresses:
+    - address: 172.19.0.8
+      type: InternalIP
+    - address: sentinelops-dev-worker5
+      type: Hostname
+    allocatable:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    capacity:
+      cpu: "16"
+      ephemeral-storage: "1081101176832"
+      hugepages-1Gi: "0"
+      hugepages-2Mi: "0"
+      memory: 11880324Ki
+      pods: "110"
+    conditions:
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient memory available
+      reason: KubeletHasSufficientMemory
+      status: "False"
+      type: MemoryPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has no disk pressure
+      reason: KubeletHasNoDiskPressure
+      status: "False"
+      type: DiskPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:30:51Z"
+      message: kubelet has sufficient PID available
+      reason: KubeletHasSufficientPID
+      status: "False"
+      type: PIDPressure
+    - lastHeartbeatTime: "2026-11-21T17:34:35Z"
+      lastTransitionTime: "2026-11-21T17:31:09Z"
+      message: kubelet is posting ready status
+      reason: KubeletReady
+      status: "True"
+      type: Ready
+    daemonEndpoints:
+      kubeletEndpoint:
+        Port: 10250
+    declaredFeatures:
+    - ExtendWebSocketsToKubelet
+    - InPlacePodLevelResourcesVerticalScaling
+    - InPlacePodVerticalScalingInitContainers
+    - RestartAllContainersOnContainerExits
+    features:
+      supplementalGroupsPolicy: true
+    images:
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:eff360f86083f21c9ceaa64cbaa2e4d439d9e7e1d6834c21d25daac35e58015b
+      - registry.k8s.io/kube-apiserver-amd64:v1.37.0
+      - registry.k8s.io/kube-apiserver:v1.37.0
+      sizeBytes: 104328054
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:79bd77de40aa3294690796f94cdc8a08c4cf6a51a6a3500425c56c9e13622cc7
+      - registry.k8s.io/kube-controller-manager-amd64:v1.37.0
+      - registry.k8s.io/kube-controller-manager:v1.37.0
+      sizeBytes: 91037405
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:1aa5cce2a7d436c309f705cf2a32a50f8378a2b6f2e5dd4bb26f81c714dd0b86
+      - registry.k8s.io/kube-proxy-amd64:v1.37.0
+      - registry.k8s.io/kube-proxy:v1.37.0
+      sizeBytes: 82822887
+    - names:
+      - docker.io/library/import-2026-11-21@sha256:7e4d0bd4a97903b1868eb196868d4360697832208233b2d8c2db2b4268364268
+      - docker.io/sentinelops/test-service:local
+      sizeBytes: 64279237
+    - names:
+      - docker.io/library/import-2026-08-26@sha256:213e68034d4be2f89076d1d446501434d1bfdff862916392708f095f5fecb6e1
+      - registry.k8s.io/kube-scheduler-amd64:v1.37.0
+      - registry.k8s.io/kube-scheduler:v1.37.0
+      sizeBytes: 62688989
+    - names:
+      - docker.io/kindest/kindnetd:v20260820-69b56db7
+      sizeBytes: 39744255
+    - names:
+      - registry.k8s.io/coredns/coredns:v1.14.6
+      sizeBytes: 23758055
+    - names:
+      - registry.k8s.io/etcd:3.7.0-0
+      sizeBytes: 22342384
+    - names:
+      - docker.io/kindest/local-path-provisioner:v20260820-69b56db7
+      sizeBytes: 15868133
+    - names:
+      - docker.io/kindest/local-path-helper:v20260131-7181c60a
+      sizeBytes: 2872608
+    - names:
+      - registry.k8s.io/pause:3.10
+      sizeBytes: 320368
+    nodeInfo:
+      architecture: amd64
+      bootID: eca5d80c-ec64-44a7-9d16-2ac4ad48d50d
+      containerRuntimeVersion: containerd://2.3.4
+      kernelVersion: 6.18.58.1-microsoft-standard-WSL2
+      kubeProxyVersion: ""
+      kubeletVersion: v1.37.0
+      machineID: c8b4059dd58a458b8433722b8e4f5534
+      operatingSystem: linux
+      osImage: Debian GNU/Linux 13 (trixie)
+      runningInUserNamespace: false
+      swap:
+        capacity: 3221225472
+      systemUUID: c8b4059dd58a458b8433722b8e4f5534
+    runtimeHandlers:
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: ""
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: runc
+    - features:
+        recursiveReadOnlyMounts: true
+        userNamespaces: true
+      name: test-handler
+kind: List
+metadata:
+  resourceVersion: ""

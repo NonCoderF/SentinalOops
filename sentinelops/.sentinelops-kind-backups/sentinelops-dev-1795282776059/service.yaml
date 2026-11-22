@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sentinelops-test-service
+    meta.helm.sh/release-namespace: sentinelops-test
+  creationTimestamp: "2026-11-21T17:31:26Z"
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sentinelops-test-service
+  name: sentinelops-test-service
+  namespace: sentinelops-test
+  resourceVersion: "795"
+  uid: 7add2083-9ac8-42bf-9e17-ba9f4b6f1493
+spec:
+  clusterIP: 10.96.86.4
+  clusterIPs:
+  - 10.96.86.4
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: http
+  selector:
+    app.kubernetes.io/name: sentinelops-test-service
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}

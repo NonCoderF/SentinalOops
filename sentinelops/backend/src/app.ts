@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { AlertDatabase, encryptSecret, type AlertRecord, type IncomingAlert, type NotificationSettings, type RecoveryActionType, type RecoveryMode, type RecoveryRunbook } from './db.js';
+import { AlertDatabase, encryptSecret, type AlertRecord, type IncomingAlert, type NotificationSettings, type RecoveryActionType, type RecoveryMode, type RecoveryRunbook, type RecoveryControllerMode } from './db.js';
 import { sendAlertEmail, sendTestEmail, validateEmail } from './email.js';
 import { toAlertEvent, type AlertEvent } from './streaming.js';
 import { EventHub } from './events.js';
@@ -437,7 +437,11 @@ function validateSettings(body: Record<string, unknown>, current: NotificationSe
   const smtpUsername = typeof body.smtpUsername === 'string' ? body.smtpUsername.trim() : current.smtpUsername;
   const smtpPassword = typeof body.smtpPassword === 'string' ? body.smtpPassword : current.smtpPassword;
   const fromEmail = typeof body.fromEmail === 'string' ? body.fromEmail.trim() : current.fromEmail;
-  const recipients = Array.isArray(body.recipients) ? body.recipients.filter((item): item is string => typeof item === 'string').map((item) => item.trim()) : current.recipients;
+  const recipients = Array.isArray(body.recipients)
+    ? body.recipients.flatMap((item) => typeof item === 'string' ? item.split(',') : []).map((item) => item.trim()).filter(Boolean)
+    : typeof body.recipients === 'string'
+      ? body.recipients.split(',').map((item) => item.trim()).filter(Boolean)
+      : current.recipients;
   const severityFilter = Array.isArray(body.severityFilter) ? body.severityFilter.filter((item): item is string => typeof item === 'string') : current.severityFilter;
   const firingSubject = typeof body.firingSubject === 'string' ? body.firingSubject.trim() : current.firingSubject;
   const firingBody = typeof body.firingBody === 'string' ? body.firingBody : current.firingBody;
@@ -464,8 +468,24 @@ function validateSettings(body: Record<string, unknown>, current: NotificationSe
 }
 
 const recoveryActions = new Set<RecoveryActionType>(['RESTART_CONTAINER','START_CONTAINER','CHECK_CONTAINER_STATUS','HTTP_HEALTH_CHECK']);
-function parseRunbook(body:unknown){if(!isRecord(body))return{error:'Runbook body must be an object'};const name=typeof body.name==='string'?body.name.trim():'';const service=typeof body.service==='string'?body.service.trim():'';const actionType=body.actionType as RecoveryActionType;const mode:RecoveryMode=body.mode==='AUTOMATIC'?'AUTOMATIC':'MANUAL';const parameters=isRecord(body.parameters)&&Object.values(body.parameters).every(v=>typeof v==='string')?body.parameters as Record<string,string>:{};const endpoint=typeof body.verificationEndpoint==='string'?body.verificationEndpoint.trim():'/health';const allowedService=process.env.RECOVERY_ALLOWED_SERVICE?.trim();if(!name||name.length>100)return{error:'Runbook name is required and must be at most 100 characters'};if(!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(service))return{error:'Service must be a valid registered service name'};if(allowedService&&service!==allowedService)return{error:'This service is not enabled for recovery'};if(!recoveryActions.has(actionType))return{error:'Unsupported recovery action'};if(!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(endpoint))return{error:'Verification endpoint must be a relative HTTP path'};if(Object.values(parameters).some(v=>/[;&|`$<>\r\n]/.test(v)))return{error:'Command metacharacters are not allowed'};const integer=(v:unknown,d:number,min:number,max:number)=>{const n=typeof v==='number'?v:Number(v??d);return Number.isInteger(n)&&n>=min&&n<=max?n:d};return{value:{name,description:typeof body.description==='string'?body.description.slice(0,1000):'',service,actionType,parameters,timeoutSeconds:integer(body.timeoutSeconds,30,1,300),verificationEndpoint:endpoint,maxAttempts:integer(body.maxAttempts,1,1,5),cooldownSeconds:integer(body.cooldownSeconds,300,0,86400),mode,enabled:body.enabled===undefined?true:Boolean(body.enabled)}};}
-
+function parseRunbook(body: unknown) {
+  if (!isRecord(body)) return { error: 'Runbook body must be an object' };
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const service = typeof body.service === 'string' ? body.service.trim() : '';
+  const actionType = body.actionType as RecoveryActionType;
+  const mode: RecoveryMode = body.mode === 'AUTOMATIC' ? 'AUTOMATIC' : 'MANUAL';
+  const parameters = isRecord(body.parameters) && Object.values(body.parameters).every((value) => typeof value === 'string') ? body.parameters as Record<string, string> : {};
+  const endpoint = typeof body.verificationEndpoint === 'string' ? body.verificationEndpoint.trim() : '/health';
+  const allowedService = process.env.RECOVERY_ALLOWED_SERVICE?.trim();
+  if (!name || name.length > 100) return { error: 'Runbook name is required and must be at most 100 characters' };
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(service)) return { error: 'Service must be a valid registered service name' };
+  if (allowedService && service !== allowedService) return { error: 'This service is not enabled for recovery' };
+  if (!recoveryActions.has(actionType)) return { error: 'Unsupported recovery action' };
+  if (!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%\/-]*$/.test(endpoint)) return { error: 'Verification endpoint must be a relative HTTP path' };
+  if (Object.values(parameters).some((value) => /[;&|`$<>\r\n]/.test(value))) return { error: 'Command metacharacters are not allowed' };
+  const integer = (value: unknown, fallback: number, min: number, max: number) => { const number = typeof value === 'number' ? value : Number(value ?? fallback); return Number.isInteger(number) && number >= min && number <= max ? number : fallback; };
+  return { value: { name, description: typeof body.description === 'string' ? body.description.slice(0, 1000) : '', service, actionType, parameters, timeoutSeconds: integer(body.timeoutSeconds, 30, 1, 300), verificationEndpoint: endpoint, maxAttempts: integer(body.maxAttempts, 1, 1, 5), cooldownSeconds: integer(body.cooldownSeconds, 300, 0, 86400), mode, enabled: body.enabled === undefined ? true : Boolean(body.enabled) } };
+}
 async function verifyService(runbook: RecoveryRunbook, timeoutMs: number): Promise<boolean> {
   const base = runbook.parameters.healthUrl ?? process.env.RECOVERY_HEALTH_URL;
   if (!base) return false;
@@ -509,6 +529,8 @@ function triggerAutomaticRecovery(alert: IncomingAlert, db: AlertDatabase, event
 export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: string; webhookToken: string; dashboardUrl?: string; authEnabled?: boolean; publisher?: { publish(event: AlertEvent): Promise<void>; isConnected?: () => boolean }; events?: EventHub }): FastifyInstance {
   const { db, adminToken, webhookToken, dashboardUrl, authEnabled = process.env.AUTH_ENABLED === 'true', publisher, events } = options;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', base: { service: 'sentinelops-alert-manager' }, redact: ['req.headers.authorization', 'req.query.token', 'body.smtpPassword'] } });
+  const transitionLocks = new Set<string>();
+  let lastCapacityDiagnostic = '';
 
   void app.register(cors, { origin: ['http://localhost:3005', 'http://127.0.0.1:3005'] });
   void app.register(rateLimit, { global: false });
@@ -763,13 +785,29 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     const settings = db.getSettings();
     if (!settings.enabled || settings.recipients.length === 0 || !settings.smtpHost || !settings.fromEmail) return reply.code(400).send({ error: 'Complete and enable SMTP notification settings first' });
     const delivery = await sendTestEmail(settings, dashboardUrl, (entry) => db.recordEmail(entry));
-    return delivery.status === 'sent' ? { status: 'sent', delivery } : reply.code(502).send({ status: 'failed', delivery });
+    return delivery.status === 'sent' ? { status: 'sent', delivery } : reply.code(502).send({ status: 'failed', error: delivery.error ?? 'SMTP delivery failed', delivery });
   });
 
   app.get('/api/notifications/history', { preHandler: requireAdmin }, async () => ({ deliveries: db.listEmails() }));
 
   app.get('/api/recovery/history', { preHandler: requireAdmin }, async () => ({ recoveries: db.recoveryHistory() }));
 
+  app.get('/api/recovery/mode', { preHandler: requireAdmin }, async (request) => {
+    const application = typeof (request.query as { application?: unknown }).application === 'string' ? String((request.query as { application: string }).application) : 'test-service';
+    const mode = db.getRecoveryControllerMode(application);
+    return { ...mode, mode: mode.mode === 'MANUAL' ? 'MANUAL' : 'UNKNOWN', runtime: mode.mode === 'MANUAL' ? mode.runtime : 'unknown', requestedMode: mode.mode, verified: mode.mode === 'MANUAL', kubernetes: { context: null, namespace: null } };
+  });
+
+  app.get('/api/recovery/operations', { preHandler: requireAdmin }, async (request) => ({ operations: db.recoveryOperations(typeof (request.query as { application?: unknown }).application === 'string' ? String((request.query as { application: string }).application) : undefined) }));
+
+  app.post('/api/recovery/mode', { preHandler: requireAdmin }, async (request, reply) => {
+    const body = request.body as { application?: unknown; mode?: unknown };
+    const application = typeof body?.application === 'string' && body.application.trim() ? body.application.trim() : 'test-service';
+    if (body?.mode !== 'MANUAL') return reply.code(409).send({ error: 'Kubernetes recovery has been removed. Only Manual Runbook recovery is available.' });
+    const previous = db.getRecoveryControllerMode(application);
+    db.setRecoveryControllerMode(application, 'MANUAL', 'docker-compose', 'MANUAL_ACTIVE', 'Manual Runbook recovery is active.');
+    return { status: 'SUCCESS', mode: 'MANUAL', previous, controller: db.getRecoveryControllerMode(application) };
+  });
   app.get('/api/recovery/runbooks',{preHandler:requireAdmin},async()=>({runbooks:db.listRunbooks(),executionEnabled:Boolean(process.env.RECOVERY_CONTROLLER_URL && process.env.RECOVERY_ALLOWED_SERVICE),executionMessage:'Docker recovery is available only for the explicitly configured recovery service.'}));
   app.post('/api/recovery/runbooks',{preHandler:requireAdmin},async(request,reply)=>{const parsed=parseRunbook(request.body);if(!parsed.value)return reply.code(400).send({error:parsed.error});return{runbook:db.saveRunbook(parsed.value)};});
   app.put('/api/recovery/runbooks/:id',{preHandler:requireAdmin},async(request,reply)=>{const id=Number((request.params as {id:string}).id);if(!db.getRunbook(id))return reply.code(404).send({error:'Runbook not found'});const parsed=parseRunbook(request.body);if(!parsed.value)return reply.code(400).send({error:parsed.error});return{runbook:db.saveRunbook(parsed.value,id)};});
@@ -798,6 +836,7 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     ...db.streamStats(),
     consumers: db.consumerStatuses()
   }));
+
 
   void syncPrometheusTargets(db).catch(() => undefined);
   return app;

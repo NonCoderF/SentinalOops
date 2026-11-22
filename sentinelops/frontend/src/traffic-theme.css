@@ -178,6 +178,9 @@
 
 .analytics-gridline { stroke: var(--mc-border); }
 .analytics-coverage strong { color: var(--mc-amber); }
+.analytics-plot { padding: 8px 10px 4px 42px; box-sizing: border-box; }
+.analytics-axis { gap: 12px; padding-inline: 10px; box-sizing: border-box; }
+.time-series-x-ticks { min-width: 0; }
 
 @media (max-width: 700px) {
   .traffic-topbar { box-shadow: 0 6px 18px rgba(2, 5, 11, .28); }
