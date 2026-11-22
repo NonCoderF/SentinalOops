@@ -25,7 +25,6 @@ RUN useradd --create-home --shell /bin/bash terminal \
   && mkdir -p /workspace /home/terminal/.kube \
   && chmod 0755 /usr/local/bin/docker-terminal-entrypoint.sh \
   && chown -R terminal:terminal /workspace /home/terminal /app
-USER terminal
 WORKDIR /workspace
 ENV HOME=/home/terminal TERM=xterm-256color TERMINAL_WORKSPACE=/workspace
 EXPOSE 8787

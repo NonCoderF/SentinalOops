@@ -8,8 +8,13 @@ services:
       TERMINAL_TOKEN: ${KUBERNETES_TERMINAL_TOKEN:-local-terminal-token}
       TERMINAL_MAX_SESSIONS: ${KUBERNETES_TERMINAL_MAX_SESSIONS:-4}
       TERMINAL_TEST_SERVICE_PROXY: ${TERMINAL_TEST_SERVICE_PROXY:-true}
+      # The trusted local terminal is also the host-side kind/kubectl bridge.
+      # Keep this capability in the Compose service so a restart does not lose
+      # Docker access or kind API hostname resolution.
+      DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - kubernetes_terminal_workspace:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
     # 127.0.0.1 inside this container is the container itself. Use the
     # Docker Desktop host gateway for services published on Windows.
     extra_hosts:

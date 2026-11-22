@@ -848,16 +848,28 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     transitionLocks.add(lockKey);
     try {
       const result = await runKubernetesSetup({ operation: 'topology', clusterName, context, namespace, terminalUrl, terminalToken });
-      const nodesMarker = '__SENTINELOPS_NODES_JSON__';
-      const podsMarker = '__SENTINELOPS_PODS_JSON__';
+      // Keep these delimiters identical to the markers emitted by the
+      // trusted terminal topology command. A spelling mismatch here makes
+      // valid kubectl JSON appear as a failed refresh.
+      const nodesMarker = '__SENTINELOOPS_NODES_JSON__';
+      const podsMarker = '__SENTINELOOPS_PODS_JSON__';
       const nodesStart = result.output.lastIndexOf(nodesMarker);
       const podsStart = result.output.lastIndexOf(podsMarker);
       const completionStart = result.output.lastIndexOf('__SENTINELOPS_SETUP_DONE__:');
       if (result.exitCode !== 0 || nodesStart < 0 || podsStart < 0) return reply.code(502).send({ error: 'Kubernetes topology inspection failed', output: result.output, exitCode: result.exitCode });
       const nodesText = result.output.slice(nodesStart + nodesMarker.length, podsStart).trim();
       const podsText = result.output.slice(podsStart + podsMarker.length, completionStart > podsStart ? completionStart : undefined).trim();
-      const nodes = JSON.parse(nodesText) as Record<string, unknown>;
-      const pods = JSON.parse(podsText) as Record<string, unknown>;
+      const parseKubectlJson = (text: string): Record<string, unknown> => {
+        // The interactive terminal may append a prompt/control sequence after
+        // kubectl exits. Extract the actual JSON document before parsing so
+        // valid live topology data is not rejected by PTY framing.
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start < 0 || end < start) throw new Error('kubectl returned no JSON document');
+        return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+      };
+      const nodes = parseKubectlJson(nodesText);
+      const pods = parseKubectlJson(podsText);
       return { context, namespace, nodes: Array.isArray(nodes.items) ? nodes.items : [], pods: Array.isArray(pods.items) ? pods.items : [], agents: db.listKubernetesAgents(), leases: db.listKubernetesAgentLeases(), observedAt: new Date().toISOString() };
     } catch (error) {
       return reply.code(502).send({ error: error instanceof Error ? error.message : 'Kubernetes topology inspection failed' });
