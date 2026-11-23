@@ -16,11 +16,11 @@ function runDocker(args: string[]): Promise<CommandResult> {
   });
 }
 
-export async function readTestServiceStatus() {
+export async function readTestServiceStatus(options: { containerName?: string; target?: string } = {}) {
   const checkedAt = new Date().toISOString();
-  const containerName = process.env.TEST_SERVICE_CONTAINER ?? 'sentinelops-test-service';
+  const containerName = options.containerName ?? process.env.TEST_SERVICE_CONTAINER ?? 'sentinelops-test-service';
   const defaultHost = existsSync('/.dockerenv') ? 'host.docker.internal' : '127.0.0.1';
-  const target = process.env.TEST_SERVICE_URL ?? `http://${defaultHost}:8080/api/health`;
+  const target = options.target ?? process.env.TEST_SERVICE_URL ?? `http://${defaultHost}:8080/api/health`;
   const inspected = await runDocker(['inspect', '--format={{json .State}}', containerName]);
   let container: 'RUNNING' | 'STOPPED' | 'NOT_FOUND' | 'UNKNOWN' = 'UNKNOWN';
   if (inspected.code === 0) {
