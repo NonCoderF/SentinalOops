@@ -785,6 +785,24 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     namespace: kubernetesCommands.namespace,
     commands: readonlyCommands
   }));
+  app.get('/api/kubernetes/discovery', { preHandler: requireAdmin }, async (_request, reply) => {
+    const terminalUrl = process.env.KUBERNETES_TERMINAL_URL?.trim();
+    const terminalToken = process.env.KUBERNETES_TERMINAL_TOKEN?.trim();
+    const context = process.env.KUBERNETES_CONTEXT?.trim() || 'kind-sentinelops-dev';
+    const clusterName = process.env.KIND_CLUSTER_NAME?.trim() || 'sentinelops-dev';
+    const namespace = process.env.KUBERNETES_AGENT_NAMESPACE?.trim() || 'sentinelops-system';
+    if (!terminalUrl || !terminalToken) return reply.code(503).send({ error: 'Trusted terminal is not configured' });
+    try {
+      const result = await runKubernetesSetup({ operation: 'cluster-status', clusterName, context, namespace, terminalUrl, terminalToken });
+      const state = result.output.match(/__SENTINELOOPS_CLUSTER_STATE__:(ABSENT|READY|UNREACHABLE)/)?.[1];
+      const namespaceState = result.output.match(/__SENTINELOOPS_NAMESPACE_STATE__:(PRESENT|MISSING)/)?.[1];
+      const agentCount = Number(result.output.match(/__SENTINELOOPS_AGENT_COUNT__:(\d+)/)?.[1] ?? 0);
+      if (result.exitCode !== 0 || !state || !namespaceState) return reply.code(502).send({ error: 'Kubernetes discovery failed', output: result.output, exitCode: result.exitCode });
+      return { state: state === 'READY' ? 'ready' : state === 'ABSENT' ? 'absent' : 'error', context, clusterName, namespace, reachable: state === 'READY', namespaceExists: namespaceState === 'PRESENT', agentPods: agentCount };
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'Kubernetes discovery failed' });
+    }
+  });
   app.get('/api/test-service/status', { preHandler: requireAdmin }, async () => readTestServiceStatus());
   app.get('/api/kubernetes/agent/config', async (request, reply) => {
     const policy = db.getKubernetesAgentPolicy();

@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-export type KubernetesSetupOperation = 'create-cluster' | 'check-cluster' | 'topology' | 'create-namespace' | 'deploy-agent' | 'check-agent-pods' | 'agent-logs' | 'delete-agent-pod' | 'scale-agents-zero' | 'delete-cluster' | 'inspect-node' | 'stop-worker' | 'start-worker';
+export type KubernetesSetupOperation = 'create-cluster' | 'check-cluster' | 'cluster-status' | 'topology' | 'create-namespace' | 'deploy-agent' | 'check-agent-pods' | 'agent-logs' | 'delete-agent-pod' | 'scale-agents-zero' | 'delete-cluster' | 'inspect-node' | 'stop-worker' | 'start-worker';
 export type SetupOptions = { operation: KubernetesSetupOperation; clusterName: string; context: string; namespace: string; workerNodes?: number; agentPods?: number; podName?: string; nodeName?: string; terminalUrl: string; terminalToken: string; onOutput?: (chunk: string) => void };
 
 const manifestMarker = '__SENTINELOOPS_SETUP_MANIFEST_REQUIRED__';
@@ -94,6 +94,7 @@ function buildCommand(options: SetupOptions): { command: string; manifest?: stri
       return { command: `printf '%s' '${encoded}' | base64 -d > /tmp/sentinelops-kind.yaml; if kind get clusters 2>/dev/null | grep -Fxq ${cluster}; then printf '\nCluster already exists: ${options.clusterName}. No changes made.\n'; code=3; else kind create cluster --name ${cluster} --config /tmp/sentinelops-kind.yaml; code=$?; fi; printf '\n%s%s\n' "${completionSignal}" "$code"` };
     }
     case 'check-cluster': return { command: `kind get clusters; ${prepare}; ${kube} get nodes -o wide; code=$?; printf '\n%s%s\n' "${completionSignal}" "$code"` };
+    case 'cluster-status': return { command: `if kind get clusters 2>/dev/null | grep -Fxq ${cluster}; then ${prepare}; ${kube} get nodes >/dev/null 2>&1; node_code=$?; if [ "$node_code" -eq 0 ]; then state=READY; else state=UNREACHABLE; fi; ${kube} get namespace ${n} >/dev/null 2>&1; namespace_code=$?; if [ "$namespace_code" -eq 0 ]; then namespace_state=PRESENT; agent_count=$(${kube} -n ${n} get pods -l app=sentinelops-agent --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l); else namespace_state=MISSING; agent_count=0; fi; else state=ABSENT; namespace_state=MISSING; agent_count=0; node_code=0; fi; printf '\n__SENTINELOOPS_CLUSTER_STATE__:%s\n__SENTINELOOPS_NAMESPACE_STATE__:%s\n__SENTINELOOPS_AGENT_COUNT__:%s\n%s%s\n' "$state" "$namespace_state" "$agent_count" "${completionSignal}" "$node_code"` };
     case 'topology': return { command: `${prepare}; printf '\n__SENTINELOOPS_NODES_JSON__\n'; ${kube} get nodes -o json; nodes_code=$?; printf '\n__SENTINELOOPS_PODS_JSON__\n'; ${kube} -n ${n} get pods -l app=sentinelops-agent -o json; pods_code=$?; code=$nodes_code; if [ "$pods_code" -ne 0 ]; then code=$pods_code; fi; printf '\n%s%s\n' "${completionSignal}" "$code"` };
     case 'create-namespace': return { command: `${prepare}; ${kube} create namespace ${n} --dry-run=client -o yaml | ${kube} apply -f -; code=$?; printf '\n%s%s\n' "${completionSignal}" "$code"` };
     case 'deploy-agent': {
