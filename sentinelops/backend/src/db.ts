@@ -63,6 +63,12 @@ export type RecoveryControllerMode = 'MANUAL' | 'KUBERNETES';
 export interface RecoveryRunbook { id:number; name:string; description:string; service:string; actionType:RecoveryActionType; parameters:Record<string,string>; timeoutSeconds:number; verificationEndpoint:string; maxAttempts:number; cooldownSeconds:number; mode:RecoveryMode; enabled:boolean; createdAt:string; updatedAt:string; }
 export type EndpointNetworkScope = 'external' | 'host' | 'docker';
 export interface MonitoredEndpoint { id:number; applicationName:string; endpointUrl:string; probeUrl:string; networkScope:EndpointNetworkScope; method:'GET'|'HEAD'; expectedStatus:number; intervalSeconds:number; environment:'production'|'staging'|'development'; authType:'none'|'bearer'|'basic'; enabled:boolean; createdAt:string; updatedAt:string; }
+export type ServicePriority = 'HIGH' | 'NORMAL' | 'LOW';
+export type ServiceRecoveryAction = 'START_CONTAINER' | 'RESTART_CONTAINER';
+export interface ServiceEndpoint { id:string; serviceId:string; friendlyName:string; url:string; expectedStatus:number; enabled:boolean; }
+export interface RegisteredService { id:string; name:string; description:string; dockerEngine:string; containerId?:string; containerName?:string; monitoringEnabled:boolean; intervalSeconds:number; failureThreshold:number; timeoutSeconds:number; autoRecoveryEnabled:boolean; recoveryAction:ServiceRecoveryAction; priority:ServicePriority; cooldownSeconds:number; verificationTimeoutSeconds:number; maxAttempts:number; endpoints:ServiceEndpoint[]; createdAt:string; updatedAt:string; }
+export type RecoveryQueueStatus = 'QUEUED' | 'RECOVERING' | 'VERIFYING' | 'RECOVERED' | 'FAILED' | 'SKIPPED';
+export interface RecoveryQueueItem { id:number; serviceId:string; serviceName:string; containerKey?:string; incidentId:string; agentId?:string; priority:ServicePriority; action:ServiceRecoveryAction; status:RecoveryQueueStatus; attempts:number; availableAt:string; lockedUntil?:string; error?:string; createdAt:string; startedAt?:string; completedAt?:string; }
 
 
 function deriveKey(secret: string): Buffer {
@@ -318,6 +324,54 @@ export class AlertDatabase {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS registered_services (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        docker_engine TEXT NOT NULL DEFAULT 'default',
+        container_id TEXT,
+        container_name TEXT,
+        monitoring_enabled INTEGER NOT NULL DEFAULT 1,
+        interval_seconds INTEGER NOT NULL DEFAULT 5,
+        failure_threshold INTEGER NOT NULL DEFAULT 3,
+        timeout_seconds INTEGER NOT NULL DEFAULT 2,
+        auto_recovery_enabled INTEGER NOT NULL DEFAULT 0,
+        recovery_action TEXT NOT NULL DEFAULT 'RESTART_CONTAINER',
+        priority TEXT NOT NULL DEFAULT 'NORMAL',
+        cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+        verification_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+        max_attempts INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS service_endpoints (
+        id TEXT PRIMARY KEY,
+        service_id TEXT NOT NULL REFERENCES registered_services(id) ON DELETE CASCADE,
+        friendly_name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        expected_status INTEGER NOT NULL DEFAULT 200,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        UNIQUE(service_id, url)
+      );
+      CREATE TABLE IF NOT EXISTS recovery_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        service_id TEXT NOT NULL REFERENCES registered_services(id),
+        incident_id TEXT NOT NULL,
+        container_key TEXT,
+        agent_id TEXT,
+        priority TEXT NOT NULL DEFAULT 'NORMAL',
+        action TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'QUEUED',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        locked_until TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_queue_active_incident ON recovery_queue(service_id, incident_id) WHERE status IN ('QUEUED','RECOVERING','VERIFYING');
+      CREATE INDEX IF NOT EXISTS idx_recovery_queue_ready ON recovery_queue(status, priority, created_at);
       CREATE INDEX IF NOT EXISTS idx_dashboard_events_time ON dashboard_events(occurred_at DESC);
       CREATE INDEX IF NOT EXISTS idx_dashboard_events_incident ON dashboard_events(incident_id, occurred_at DESC);
       CREATE INDEX IF NOT EXISTS idx_dashboard_events_service ON dashboard_events(service_id, occurred_at DESC);
@@ -336,6 +390,7 @@ export class AlertDatabase {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE notification_settings ADD COLUMN ${name} ${definition}`);
     }
     if (!existing.has('content')) this.db.exec("ALTER TABLE notification_settings ADD COLUMN content TEXT NOT NULL DEFAULT ''");
+    this.migrateLegacyTestService();
   }
 
   close(): void {
@@ -356,6 +411,85 @@ export class AlertDatabase {
     return rows.map((row) => ({ id: Number(row.id), applicationName: String(row.application_name), endpointUrl: String(row.endpoint_url), probeUrl: String(row.probe_url || row.endpoint_url), networkScope: (['external', 'host', 'docker'].includes(String(row.network_scope)) ? String(row.network_scope) : 'external') as MonitoredEndpoint['networkScope'], method: row.method === 'HEAD' ? 'HEAD' : 'GET', expectedStatus: Number(row.expected_status), intervalSeconds: Number(row.interval_seconds), environment: (['production', 'staging', 'development'].includes(String(row.environment)) ? String(row.environment) : 'production') as MonitoredEndpoint['environment'], authType: (['bearer', 'basic'].includes(String(row.auth_type)) ? String(row.auth_type) : 'none') as MonitoredEndpoint['authType'], enabled: Boolean(row.enabled), createdAt: String(row.created_at), updatedAt: String(row.updated_at) }));
   }
 
+  listRegisteredServices(): RegisteredService[] {
+    const services = this.db.prepare('SELECT * FROM registered_services ORDER BY name COLLATE NOCASE').all() as Array<Record<string, unknown>>;
+    const endpoints = this.db.prepare('SELECT * FROM service_endpoints ORDER BY friendly_name COLLATE NOCASE').all() as Array<Record<string, unknown>>;
+    return services.map((row) => this.mapService(row, endpoints.filter((endpoint) => String(endpoint.service_id) === String(row.id))));
+  }
+
+  getRegisteredService(id: string): RegisteredService | undefined {
+    return this.listRegisteredServices().find((service) => service.id === id);
+  }
+
+  saveRegisteredService(input: Omit<RegisteredService, 'createdAt'|'updatedAt'>, id?: string): RegisteredService {
+    const timestamp = now();
+    const serviceId = id ?? input.id ?? crypto.randomUUID();
+    const write = this.db.transaction(() => {
+      if (id) this.db.prepare(`UPDATE registered_services SET name=?, description=?, docker_engine=?, container_id=?, container_name=?, monitoring_enabled=?, interval_seconds=?, failure_threshold=?, timeout_seconds=?, auto_recovery_enabled=?, recovery_action=?, priority=?, cooldown_seconds=?, verification_timeout_seconds=?, max_attempts=?, updated_at=? WHERE id=?`).run(input.name, input.description, input.dockerEngine, input.containerId ?? null, input.containerName ?? null, input.monitoringEnabled ? 1 : 0, input.intervalSeconds, input.failureThreshold, input.timeoutSeconds, input.autoRecoveryEnabled ? 1 : 0, input.recoveryAction, input.priority, input.cooldownSeconds, input.verificationTimeoutSeconds, input.maxAttempts, timestamp, serviceId);
+      else this.db.prepare(`INSERT INTO registered_services (id,name,description,docker_engine,container_id,container_name,monitoring_enabled,interval_seconds,failure_threshold,timeout_seconds,auto_recovery_enabled,recovery_action,priority,cooldown_seconds,verification_timeout_seconds,max_attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(serviceId, input.name, input.description, input.dockerEngine, input.containerId ?? null, input.containerName ?? null, input.monitoringEnabled ? 1 : 0, input.intervalSeconds, input.failureThreshold, input.timeoutSeconds, input.autoRecoveryEnabled ? 1 : 0, input.recoveryAction, input.priority, input.cooldownSeconds, input.verificationTimeoutSeconds, input.maxAttempts, timestamp, timestamp);
+      this.db.prepare('DELETE FROM service_endpoints WHERE service_id=?').run(serviceId);
+      const insert = this.db.prepare('INSERT INTO service_endpoints (id,service_id,friendly_name,url,expected_status,enabled) VALUES (?,?,?,?,?,?)');
+      for (const endpoint of input.endpoints) insert.run(endpoint.id || crypto.randomUUID(), serviceId, endpoint.friendlyName, endpoint.url, endpoint.expectedStatus, endpoint.enabled ? 1 : 0);
+    });
+    write();
+    return this.getRegisteredService(serviceId) as RegisteredService;
+  }
+
+  deleteRegisteredService(id: string): boolean {
+    return this.db.transaction(() => {
+      // Unregistering a service must not leave recovery-queue rows pointing at
+      // a deleted configuration. Incidents and dashboard events are stored
+      // independently and remain available as historical records.
+      this.db.prepare('DELETE FROM recovery_queue WHERE service_id=?').run(id);
+      this.db.prepare('DELETE FROM service_endpoints WHERE service_id=?').run(id);
+      return this.db.prepare('DELETE FROM registered_services WHERE id=?').run(id).changes > 0;
+    })();
+  }
+
+  enqueueRecovery(service: RegisteredService, incidentId: string, agentId?: string): RecoveryQueueItem {
+    const containerKey = service.containerId ? `${service.dockerEngine}:${service.containerId}` : undefined;
+    const existing = this.db.prepare("SELECT id FROM recovery_queue WHERE service_id=? AND incident_id=? AND status IN ('QUEUED','RECOVERING','VERIFYING')").get(service.id, incidentId) as { id?: number } | undefined;
+    if (existing?.id) return this.getRecoveryQueueItem(Number(existing.id)) as RecoveryQueueItem;
+    const duplicate = containerKey ? this.db.prepare("SELECT id FROM recovery_queue WHERE container_key=? AND status IN ('QUEUED','RECOVERING','VERIFYING')").get(containerKey) as { id?: number } | undefined : undefined;
+    if (duplicate?.id) return this.getRecoveryQueueItem(Number(duplicate.id)) as RecoveryQueueItem;
+    const result = this.db.prepare('INSERT INTO recovery_queue (service_id,incident_id,container_key,agent_id,priority,action,status,available_at,created_at) VALUES (?,?,?,?,?,?,\'QUEUED\',?,?)').run(service.id, incidentId, containerKey ?? null, agentId ?? null, service.priority, service.recoveryAction, now(), now());
+    return this.getRecoveryQueueItem(Number(result.lastInsertRowid)) as RecoveryQueueItem;
+  }
+
+  getRecoveryQueueItem(id: number): RecoveryQueueItem | undefined {
+    const row = this.db.prepare('SELECT q.*, s.name AS service_name FROM recovery_queue q JOIN registered_services s ON s.id=q.service_id WHERE q.id=?').get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapQueueItem(row) : undefined;
+  }
+
+  listRecoveryQueue(limit = 100): RecoveryQueueItem[] {
+    const rows = this.db.prepare(`SELECT q.*, s.name AS service_name FROM recovery_queue q JOIN registered_services s ON s.id=q.service_id ORDER BY CASE q.status WHEN 'RECOVERING' THEN 0 WHEN 'VERIFYING' THEN 1 WHEN 'QUEUED' THEN 2 ELSE 3 END, CASE q.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END, q.created_at ASC LIMIT ?`).all(Math.min(Math.max(limit, 1), 500)) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapQueueItem(row));
+  }
+
+  claimNextRecovery(): RecoveryQueueItem | undefined {
+    const timestamp = now();
+    this.db.prepare("UPDATE recovery_queue SET status='FAILED', error='Recovery worker lease expired; manual review required', completed_at=? WHERE status IN ('RECOVERING','VERIFYING') AND locked_until < ?").run(timestamp, timestamp);
+    const active = this.db.prepare("SELECT id FROM recovery_queue WHERE status IN ('RECOVERING','VERIFYING')").get();
+    if (active) return undefined;
+    const row = this.db.prepare(`SELECT q.*, s.name AS service_name FROM recovery_queue q JOIN registered_services s ON s.id=q.service_id WHERE q.status='QUEUED' AND q.available_at<=? ORDER BY CASE q.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END, q.created_at ASC LIMIT 1`).get(timestamp) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    const lockedUntil = new Date(Date.now() + 120000).toISOString();
+    this.db.prepare("UPDATE recovery_queue SET status='RECOVERING', attempts=attempts+1, locked_until=?, started_at=COALESCE(started_at,?) WHERE id=? AND status='QUEUED'").run(lockedUntil, now(), row.id);
+    return this.getRecoveryQueueItem(Number(row.id));
+  }
+
+  updateRecoveryQueue(id: number, status: RecoveryQueueStatus, error?: string): void {
+    this.db.prepare('UPDATE recovery_queue SET status=?, error=?, locked_until=NULL, completed_at=? WHERE id=?').run(status, error?.slice(0, 1000) ?? null, ['RECOVERED','FAILED','SKIPPED'].includes(status) ? now() : null, id);
+  }
+
+  private migrateLegacyTestService(): void {
+    if (this.db.prepare('SELECT 1 FROM registered_services WHERE name=?').get('test-service')) return;
+    const legacy = this.listMonitoredEndpoints();
+    if (!legacy.length) return;
+    const endpoints = legacy.map((endpoint) => ({ id: crypto.randomUUID(), serviceId: '', friendlyName: endpoint.applicationName, url: endpoint.probeUrl || endpoint.endpointUrl, expectedStatus: endpoint.expectedStatus, enabled: endpoint.enabled }));
+    this.saveRegisteredService({ id: crypto.randomUUID(), name: 'test-service', description: 'Migrated legacy monitored service', dockerEngine: 'default', containerName: process.env.TEST_SERVICE_CONTAINER ?? 'sentinelops-test-service', monitoringEnabled: true, intervalSeconds: 5, failureThreshold: 3, timeoutSeconds: 2, autoRecoveryEnabled: false, recoveryAction: 'RESTART_CONTAINER', priority: 'NORMAL', cooldownSeconds: 60, verificationTimeoutSeconds: 60, maxAttempts: 1, endpoints });
+  }
+
   saveMonitoredEndpoint(endpoint: Omit<MonitoredEndpoint, 'id' | 'createdAt' | 'updatedAt'> & { id?: number; authSecretEncrypted?: string }): MonitoredEndpoint {
     const timestamp = now();
     if (endpoint.id) this.db.prepare('UPDATE monitored_endpoints SET application_name=?, endpoint_url=?, probe_url=?, network_scope=?, method=?, expected_status=?, interval_seconds=?, environment=?, auth_type=?, auth_secret_encrypted=COALESCE(NULLIF(?, \'\'), auth_secret_encrypted), enabled=?, updated_at=? WHERE id=?').run(endpoint.applicationName, endpoint.endpointUrl, endpoint.probeUrl, endpoint.networkScope, endpoint.method, endpoint.expectedStatus, endpoint.intervalSeconds, endpoint.environment, endpoint.authType, endpoint.authSecretEncrypted ?? '', endpoint.enabled ? 1 : 0, timestamp, endpoint.id);
@@ -365,6 +499,16 @@ export class AlertDatabase {
   }
 
   deleteMonitoredEndpoint(id: number): boolean { return this.db.prepare('DELETE FROM monitored_endpoints WHERE id = ?').run(id).changes > 0; }
+
+  deleteMonitoredEndpointsForService(service: RegisteredService): number[] {
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const serviceName = normalize(service.name);
+    const urls = new Set(service.endpoints.map((endpoint) => endpoint.url));
+    const rows = this.db.prepare('SELECT id, application_name, endpoint_url, probe_url FROM monitored_endpoints').all() as Array<{ id: number; application_name: string; endpoint_url: string; probe_url: string }>;
+    const ids = rows.filter((row) => normalize(row.application_name) === serviceName && (urls.has(row.endpoint_url) || urls.has(row.probe_url))).map((row) => row.id);
+    if (ids.length) this.db.prepare(`DELETE FROM monitored_endpoints WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
+    return ids;
+  }
 
   recordPublishedEvent(event: AlertEvent): void {
     this.db.prepare('INSERT OR IGNORE INTO stream_events (event_id, fingerprint, status, event_json, published_at) VALUES (?, ?, ?, ?, ?)').run(event.eventId, event.fingerprint, event.status, JSON.stringify(event), event.receivedAt);
@@ -501,7 +645,7 @@ export class AlertDatabase {
     return result.changes > 0;
   }
   listKubernetesAgentLeases(): Array<Record<string, unknown>> { return this.db.prepare('SELECT service, incident_id, owner_agent_id, expires_at, updated_at FROM kubernetes_agent_leases ORDER BY service').all() as Array<Record<string, unknown>>; }
-  createKubernetesIncident(incidentId: string, monitorId: number, service: string, error: string, metadata: unknown = {}): boolean { const result = this.db.prepare('INSERT OR IGNORE INTO kubernetes_agent_incidents (incident_id, monitor_id, service, status, failure_count, detected_at, last_error, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(incidentId, monitorId, service, 'ACTIVE', 1, now(), error.slice(0, 1000), JSON.stringify(metadata)); return result.changes > 0; }
+  createKubernetesIncident(incidentId: string, monitorId: number|string, service: string, error: string, metadata: unknown = {}): boolean { const result = this.db.prepare('INSERT OR IGNORE INTO kubernetes_agent_incidents (incident_id, monitor_id, service, status, failure_count, detected_at, last_error, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(incidentId, monitorId, service, 'ACTIVE', 1, now(), error.slice(0, 1000), JSON.stringify(metadata)); return result.changes > 0; }
   getKubernetesIncident(incidentId: string): Record<string, unknown> | undefined { return this.db.prepare('SELECT * FROM kubernetes_agent_incidents WHERE incident_id=?').get(incidentId) as Record<string, unknown> | undefined; }
   updateKubernetesIncident(incidentId: string, update: { status?: string; failureCount?: number; error?: string; recoveryAttempts?: number; recoveredAt?: string | null }): void { const row = this.getKubernetesIncident(incidentId); if (!row) return; this.db.prepare('UPDATE kubernetes_agent_incidents SET status=?, failure_count=?, last_error=?, recovery_attempts=?, recovered_at=? WHERE incident_id=?').run(update.status ?? String(row.status), update.failureCount ?? Number(row.failure_count), update.error ?? row.last_error ?? null, update.recoveryAttempts ?? Number(row.recovery_attempts), update.recoveredAt === undefined ? row.recovered_at ?? null : update.recoveredAt, incidentId); }
   listKubernetesIncidents(limit = 100): Array<Record<string, unknown>> { return this.db.prepare('SELECT * FROM kubernetes_agent_incidents ORDER BY detected_at DESC LIMIT ?').all(Math.min(Math.max(limit, 1), 500)) as Array<Record<string, unknown>>; }
@@ -696,6 +840,12 @@ export class AlertDatabase {
     };
   }
   private mapRunbook(row:Record<string,unknown>):RecoveryRunbook { return {id:Number(row.id),name:String(row.name),description:String(row.description),service:String(row.service),actionType:row.action_type as RecoveryActionType,parameters:parseJson(String(row.parameters_json),{}),timeoutSeconds:Number(row.timeout_seconds),verificationEndpoint:String(row.verification_endpoint),maxAttempts:Number(row.max_attempts),cooldownSeconds:Number(row.cooldown_seconds),mode:row.mode as RecoveryMode,enabled:Boolean(row.enabled),createdAt:String(row.created_at),updatedAt:String(row.updated_at)}; }
+  private mapService(row: Record<string, unknown>, endpointRows: Array<Record<string, unknown>>): RegisteredService {
+    return { id: String(row.id), name: String(row.name), description: String(row.description ?? ''), dockerEngine: String(row.docker_engine ?? 'default'), containerId: row.container_id ? String(row.container_id) : undefined, containerName: row.container_name ? String(row.container_name) : undefined, monitoringEnabled: Boolean(row.monitoring_enabled), intervalSeconds: Number(row.interval_seconds), failureThreshold: Number(row.failure_threshold), timeoutSeconds: Number(row.timeout_seconds), autoRecoveryEnabled: Boolean(row.auto_recovery_enabled), recoveryAction: row.recovery_action === 'START_CONTAINER' ? 'START_CONTAINER' : 'RESTART_CONTAINER', priority: (['HIGH','NORMAL','LOW'].includes(String(row.priority)) ? String(row.priority) : 'NORMAL') as ServicePriority, cooldownSeconds: Number(row.cooldown_seconds), verificationTimeoutSeconds: Number(row.verification_timeout_seconds), maxAttempts: Number(row.max_attempts), endpoints: endpointRows.map((endpoint) => ({ id: String(endpoint.id), serviceId: String(endpoint.service_id), friendlyName: String(endpoint.friendly_name), url: String(endpoint.url), expectedStatus: Number(endpoint.expected_status), enabled: Boolean(endpoint.enabled) })), createdAt: String(row.created_at), updatedAt: String(row.updated_at) };
+  }
+  private mapQueueItem(row: Record<string, unknown>): RecoveryQueueItem {
+    return { id: Number(row.id), serviceId: String(row.service_id), serviceName: String(row.service_name), containerKey: row.container_key ? String(row.container_key) : undefined, incidentId: String(row.incident_id), agentId: row.agent_id ? String(row.agent_id) : undefined, priority: (['HIGH','NORMAL','LOW'].includes(String(row.priority)) ? String(row.priority) : 'NORMAL') as ServicePriority, action: row.action === 'START_CONTAINER' ? 'START_CONTAINER' : 'RESTART_CONTAINER', status: String(row.status) as RecoveryQueueStatus, attempts: Number(row.attempts), availableAt: String(row.available_at), lockedUntil: row.locked_until ? String(row.locked_until) : undefined, error: row.error ? String(row.error) : undefined, createdAt: String(row.created_at), startedAt: row.started_at ? String(row.started_at) : undefined, completedAt: row.completed_at ? String(row.completed_at) : undefined };
+  }
 
 
   private incrementCounter(name: string, eventAt: string): void {

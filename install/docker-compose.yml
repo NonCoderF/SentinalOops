@@ -77,7 +77,7 @@ services:
 
   prometheus:
     image: ${PROMETHEUS_IMAGE}
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.enable-lifecycle"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.enable-lifecycle", "--web.enable-admin-api"]
     volumes:
       - prometheus_data:/prometheus
       - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -117,6 +117,7 @@ services:
       PORT: "8090"
       RECOVERY_CONTROLLER_TOKEN: ${RECOVERY_CONTROLLER_TOKEN:-local-recovery-controller-token}
       ALLOWED_COMPOSE_PROJECT: ${RECOVERY_COMPOSE_PROJECT:-sentinelops-test-service}
+      ALLOWED_RECOVERY_SERVICES: ${RECOVERY_ALLOWED_SERVICES:-test-service,test-service-2}
       ALLOWED_RECOVERY_SERVICE: ${RECOVERY_ALLOWED_SERVICE:-test-service}
       ALLOWED_RECOVERY_IMAGE: ${RECOVERY_ALLOWED_IMAGE:-sentinelops/test-service:local}
     volumes:

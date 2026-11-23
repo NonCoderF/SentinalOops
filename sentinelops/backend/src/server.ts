@@ -5,6 +5,7 @@ import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { EventHub } from './events.js';
 import { startTrafficStreaming } from './traffic-stream.js';
+import { startRecoveryQueue } from './recovery-queue.js';
 
 const port = Number(process.env.PORT ?? 8081);
 const host = process.env.HOST ?? '0.0.0.0';
@@ -37,6 +38,7 @@ const app = buildAlertManagerApp({ db, adminToken, webhookToken, dashboardUrl: p
 const stopPolling = startPrometheusPolling(db, process.env.DASHBOARD_URL, events);
 const stopTraffic = startTrafficStreaming(db, events);
 const stopNotifications = startNotificationWorker(db, process.env.DASHBOARD_URL, events);
+const stopRecoveryQueue = startRecoveryQueue(db, events);
 const frontendNoCache = process.env.FRONTEND_NO_CACHE === 'true';
 await app.register(fastifyStatic, {
   root: process.env.STATIC_ROOT ?? path.resolve('sentinelops/frontend/dist'),
@@ -55,6 +57,7 @@ await app.register(fastifyStatic, {
 app.get('/setup', async (_request, reply) => reply.sendFile('index.html'));
 app.get('/apis', async (_request, reply) => reply.sendFile('index.html'));
 app.get('/traffic', async (_request, reply) => reply.sendFile('index.html'));
+app.get('/services', async (_request, reply) => reply.sendFile('index.html'));
 app.get('/recovery', async (_request, reply) => reply.redirect('/recovery/manual'));
 app.get('/recovery/manual', async (_request, reply) => reply.sendFile('index.html'));
 
@@ -64,6 +67,7 @@ const shutdown = async (signal: string) => {
   stopPolling();
   stopTraffic();
   stopNotifications();
+  stopRecoveryQueue();
   db.close();
   process.exit(0);
 };

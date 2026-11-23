@@ -19,3 +19,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  test-service-2:
+    build:
+      context: ../test-service-2
+      dockerfile: Dockerfile
+    image: sentinelops/test-service-2:local
+    container_name: sentinelops-test-service-2
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+    ports:
+      - "127.0.0.1:8081:8080"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

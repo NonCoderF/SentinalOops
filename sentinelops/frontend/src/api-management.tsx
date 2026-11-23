@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 type ApiItem = { id:number; applicationName:string; endpointUrl:string; probeUrl:string; networkScope:string; method:'GET'|'HEAD'; expectedStatus:number; intervalSeconds:number; environment:string; authType:string; enabled:boolean; monitoringStatus?:string; lastResponseCode?:number|null; responseTimeSeconds?:number|null; lastChecked?:string|null };
-type TrafficSeries = { applicationName:string; endpointId:number; route?:string; available:boolean; points:[number,number][] };
+type TrafficSeries = { applicationName:string; endpointId:string|number; route?:string; available:boolean; points:[number,number][] };
 const request = async <T,>(url:string, init?:RequestInit):Promise<T> => { const headers=new Headers(init?.headers); const token=sessionStorage.getItem('sentinelops-admin-token'); if(token) headers.set('Authorization',`Bearer ${token}`); const response=await fetch(url,{cache:'no-store',...init,headers}); if(!response.ok) throw new Error((await response.json().catch(()=>null))?.error??`Request failed (${response.status})`); return response.json() as Promise<T>; };
 const blank = { applicationName:'', endpointUrl:'', probeUrl:'', networkScope:'host', method:'GET', expectedStatus:200, environment:'development', intervalSeconds:30, authType:'none', enabled:true };
 

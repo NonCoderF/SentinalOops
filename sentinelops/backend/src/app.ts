@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { AlertDatabase, encryptSecret, type AlertRecord, type IncomingAlert, type NotificationSettings, type RecoveryActionType, type RecoveryMode, type RecoveryRunbook, type RecoveryControllerMode } from './db.js';
+import { AlertDatabase, encryptSecret, type AlertRecord, type IncomingAlert, type NotificationSettings, type RecoveryActionType, type RecoveryMode, type RecoveryRunbook, type RecoveryControllerMode, type RegisteredService } from './db.js';
 import { sendAlertEmail, sendTestEmail, validateEmail } from './email.js';
 import { toAlertEvent, type AlertEvent } from './streaming.js';
 import { EventHub } from './events.js';
@@ -177,7 +177,9 @@ async function validateEndpointUrl(value: string, allowInternal = false): Promis
 async function syncPrometheusTargets(db: AlertDatabase): Promise<void> {
   const destination = process.env.PROMETHEUS_FILE_SD_PATH;
   if (!destination) return;
-  const targets = db.listMonitoredEndpoints().filter((endpoint) => endpoint.enabled).map((endpoint) => ({ targets: [endpoint.probeUrl || endpoint.endpointUrl], labels: { endpoint_id: String(endpoint.id), application: endpoint.applicationName, environment: endpoint.environment } }));
+  const legacyTargets = db.listMonitoredEndpoints().filter((endpoint) => endpoint.enabled).map((endpoint) => ({ targets: [endpoint.probeUrl || endpoint.endpointUrl], labels: { endpoint_id: String(endpoint.id), application: endpoint.applicationName, environment: endpoint.environment } }));
+  const serviceTargets = db.listRegisteredServices().flatMap((service) => service.monitoringEnabled ? service.endpoints.filter((endpoint) => endpoint.enabled).map((endpoint) => ({ targets: [endpoint.url], labels: { endpoint_id: endpoint.id, application: service.name, environment: 'development' } })) : []);
+  const targets = [...legacyTargets, ...serviceTargets];
   await mkdir(destination.substring(0, destination.lastIndexOf('/')), { recursive: true });
   const temporary = `${destination}.tmp`;
   await writeFile(temporary, `${JSON.stringify(targets, null, 2)}\n`, { mode: 0o644 });
@@ -185,7 +187,13 @@ async function syncPrometheusTargets(db: AlertDatabase): Promise<void> {
   const metricsTarget = process.env.PROMETHEUS_METRICS_TARGET?.trim();
   const metricsPath = process.env.PROMETHEUS_METRICS_FILE_SD_PATH;
   if (metricsPath) {
-    const metricsTargets = metricsTarget ? [{ targets: [metricsTarget], labels: { application: process.env.PROMETHEUS_METRICS_APPLICATION?.trim() || 'application' } }] : [];
+    const configuredMetricsTargets = metricsTarget ? [{ targets: [metricsTarget], labels: { application: process.env.PROMETHEUS_METRICS_APPLICATION?.trim() || 'application' } }] : [];
+    const registeredMetricsTargets = db.listRegisteredServices().flatMap((service) => {
+      const endpoint = service.endpoints.find((candidate) => candidate.enabled);
+      if (!service.monitoringEnabled || !endpoint) return [];
+      try { const url = new URL(endpoint.url); return [{ targets: [`${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`], labels: { application: service.name } }]; } catch { return []; }
+    });
+    const metricsTargets = [...configuredMetricsTargets, ...registeredMetricsTargets.filter((candidate) => !configuredMetricsTargets.some((configured) => configured.labels.application === candidate.labels.application))];
     const metricsTemporary = `${metricsPath}.tmp`;
     await writeFile(metricsTemporary, `${JSON.stringify(metricsTargets, null, 2)}\n`, { mode: 0o644 });
     await rename(metricsTemporary, metricsPath);
@@ -217,7 +225,7 @@ async function trafficData(range: string, db: AlertDatabase) {
     '1h': { seconds: 3600, step: 30, rate: '1m' }, '6h': { seconds: 21600, step: 300, rate: '5m' }, '24h': { seconds: 86400, step: 900, rate: '15m' }
   };
   const selected = windows[range] ?? windows['15m'];
-  const enabled = db.listMonitoredEndpoints().filter((endpoint) => endpoint.enabled);
+  const enabled = trafficEndpoints(db);
   const applications = [...new Map(enabled.map((endpoint) => [endpoint.applicationName, enabled.filter((candidate) => candidate.applicationName === endpoint.applicationName)])).values()];
   const series = (await Promise.all(applications.map(async (endpoints) => {
     const application = endpoints[0].applicationName;
@@ -296,7 +304,7 @@ export function summarizeTrafficStatus(rows: Array<{ statusCode: string; total: 
 async function trafficIntelligence(range: string, service: string | undefined, route: string | undefined, db: AlertDatabase) {
   const selected = intelligenceWindows[range] ?? intelligenceWindows['15m'];
   const selectedRange = intelligenceWindows[range] ? range : '15m';
-  const registered = db.listMonitoredEndpoints().filter(endpoint => endpoint.enabled);
+  const registered = trafficEndpoints(db);
   const applications = [...new Set(registered.map(endpoint => endpoint.applicationName))];
   const routes = [...new Set(registered.map(endpoint => { try { return new URL(endpoint.endpointUrl).pathname; } catch { return ''; } }).filter(Boolean))];
   const application = service && applications.includes(service) ? service : undefined;
@@ -583,6 +591,57 @@ function parseRunbook(body: unknown) {
   const integer = (value: unknown, fallback: number, min: number, max: number) => { const number = typeof value === 'number' ? value : Number(value ?? fallback); return Number.isInteger(number) && number >= min && number <= max ? number : fallback; };
   return { value: { name, description: typeof body.description === 'string' ? body.description.slice(0, 1000) : '', service, actionType, parameters, timeoutSeconds: integer(body.timeoutSeconds, 30, 1, 300), verificationEndpoint: endpoint, maxAttempts: integer(body.maxAttempts, 1, 1, 5), cooldownSeconds: integer(body.cooldownSeconds, 300, 0, 86400), mode, enabled: body.enabled === undefined ? true : Boolean(body.enabled) } };
 }
+
+async function purgePrometheusServiceSeries(service: RegisteredService, legacyEndpointIds: number[] = []): Promise<void> {
+  const base = process.env.PROMETHEUS_URL ?? 'http://prometheus:9090';
+  const matchers = [
+    ...service.endpoints.map((endpoint) => `{endpoint_id="${endpoint.id}"}`),
+    ...legacyEndpointIds.map((id) => `{endpoint_id="${id}"}`),
+    `{application="${service.name.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"}`
+  ];
+  for (const matcher of matchers) {
+    const response = await fetch(`${base}/api/v1/admin/tsdb/delete_series?match[]=${encodeURIComponent(matcher)}`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`Prometheus series purge failed (${response.status})`);
+  }
+  const cleanup = await fetch(`${base}/api/v1/admin/tsdb/clean_tombstones`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+  if (!cleanup.ok) throw new Error(`Prometheus tombstone cleanup failed (${cleanup.status})`);
+}
+
+type TrafficEndpoint = { id: string; applicationName: string; endpointUrl: string; enabled: boolean; method: 'GET'|'HEAD' };
+function trafficEndpoints(db: AlertDatabase): TrafficEndpoint[] {
+  const byKey = new Map<string, TrafficEndpoint>();
+  for (const endpoint of db.listMonitoredEndpoints()) if (endpoint.enabled) byKey.set(`${endpoint.applicationName}\u0000${endpoint.endpointUrl}`, { id: String(endpoint.id), applicationName: endpoint.applicationName, endpointUrl: endpoint.endpointUrl, enabled: true, method: endpoint.method });
+  for (const service of db.listRegisteredServices()) for (const endpoint of service.endpoints) if (service.monitoringEnabled && endpoint.enabled) byKey.set(`${service.name}\u0000${endpoint.url}`, { id: endpoint.id, applicationName: service.name, endpointUrl: endpoint.url, enabled: true, method: 'GET' });
+  return [...byKey.values()];
+}
+
+function parseRegisteredService(body: Record<string, unknown>, existing?: import('./db.js').RegisteredService): Omit<import('./db.js').RegisteredService, 'createdAt'|'updatedAt'> {
+  const value = (name: string, fallback: unknown) => body[name] === undefined ? fallback : body[name];
+  const name = String(value('name', existing?.name ?? '')).trim();
+  if (!name || !/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,119}$/.test(name)) throw new Error('Service name is required and may contain only letters, numbers, spaces, dot, dash, and underscore');
+  const rawEndpoints = Array.isArray(value('endpoints', existing?.endpoints ?? [])) ? value('endpoints', existing?.endpoints ?? []) as unknown[] : [];
+  const endpoints = rawEndpoints.map((item, index) => {
+    const row = isRecord(item) ? item : {};
+    const url = String(row.url ?? '').trim();
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new Error(`Endpoint ${index + 1} must be a valid URL`); }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(`Endpoint ${index + 1} must use HTTP or HTTPS`);
+    const expectedStatus = Number(row.expectedStatus ?? 200);
+    if (!Number.isInteger(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) throw new Error(`Endpoint ${index + 1} has an invalid expected status`);
+    return { id: typeof row.id === 'string' ? row.id : crypto.randomUUID(), serviceId: existing?.id ?? '', friendlyName: String((row.friendlyName ?? parsed.pathname) || 'Health check').slice(0, 120), url: parsed.toString(), expectedStatus, enabled: row.enabled !== false };
+  });
+  if (!endpoints.length) throw new Error('At least one health endpoint is required');
+  const integer = (field: string, fallback: number, min: number, max: number) => { const n = Number(value(field, fallback)); if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${field} must be between ${min} and ${max}`); return n; };
+  const autoRecoveryEnabled = Boolean(value('autoRecoveryEnabled', existing?.autoRecoveryEnabled ?? false));
+  const containerId = String(value('containerId', existing?.containerId ?? '') || '').trim() || undefined;
+  const containerName = String(value('containerName', existing?.containerName ?? '') || '').trim() || undefined;
+  if (autoRecoveryEnabled && (!containerId || !containerName)) throw new Error('Automatic recovery requires an authorized container mapping');
+  const priority = String(value('priority', existing?.priority ?? 'NORMAL'));
+  if (!['HIGH','NORMAL','LOW'].includes(priority)) throw new Error('Invalid recovery priority');
+  const action = String(value('recoveryAction', existing?.recoveryAction ?? 'RESTART_CONTAINER'));
+  if (!['START_CONTAINER','RESTART_CONTAINER'].includes(action)) throw new Error('Invalid recovery action');
+  return { id: existing?.id ?? crypto.randomUUID(), name, description: String(value('description', existing?.description ?? '')).slice(0, 500), dockerEngine: String(value('dockerEngine', existing?.dockerEngine ?? 'default')).slice(0, 120), containerId, containerName, monitoringEnabled: Boolean(value('monitoringEnabled', existing?.monitoringEnabled ?? true)), intervalSeconds: integer('intervalSeconds', existing?.intervalSeconds ?? 5, 1, 3600), failureThreshold: integer('failureThreshold', existing?.failureThreshold ?? 3, 1, 20), timeoutSeconds: integer('timeoutSeconds', existing?.timeoutSeconds ?? 2, 1, 60), autoRecoveryEnabled, recoveryAction: action as 'START_CONTAINER'|'RESTART_CONTAINER', priority: priority as 'HIGH'|'NORMAL'|'LOW', cooldownSeconds: integer('cooldownSeconds', existing?.cooldownSeconds ?? 60, 0, 86400), verificationTimeoutSeconds: integer('verificationTimeoutSeconds', existing?.verificationTimeoutSeconds ?? 60, 5, 3600), maxAttempts: integer('maxAttempts', existing?.maxAttempts ?? 1, 1, 10), endpoints };
+}
 async function verifyService(runbook: RecoveryRunbook, timeoutMs: number): Promise<boolean> {
   const base = runbook.parameters.healthUrl ?? process.env.RECOVERY_HEALTH_URL ?? 'http://host.docker.internal:8080/api/health';
   if (!base) return false;
@@ -754,6 +813,51 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     return { configured: true };
   });
 
+  app.get('/api/services', { preHandler: requireAdmin }, async () => ({ services: db.listRegisteredServices() }));
+  app.get('/api/services/containers', { preHandler: requireAdmin }, async (_request, reply) => {
+    const controller = process.env.RECOVERY_CONTROLLER_URL ?? 'http://recovery-controller:8090';
+    const token = process.env.RECOVERY_CONTROLLER_TOKEN ?? '';
+    try {
+      const response = await fetch(`${controller}/v1/containers`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
+      const body = await response.json().catch(() => ({}));
+      return response.ok ? body : reply.code(503).send(body);
+    } catch (error) { return reply.code(503).send({ error: error instanceof Error ? error.message : 'Container discovery unavailable' }); }
+  });
+  app.post('/api/services', { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const body = isRecord(request.body) ? request.body : {};
+      const service = parseRegisteredService(body);
+      const saved = db.saveRegisteredService(service);
+      await syncPrometheusTargets(db);
+      return reply.code(201).send({ service: saved });
+    } catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Invalid service configuration' }); }
+  });
+  app.put('/api/services/:id', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = String((request.params as { id: string }).id);
+    if (!db.getRegisteredService(id)) return reply.code(404).send({ error: 'Service not found' });
+    try { const saved = db.saveRegisteredService(parseRegisteredService(isRecord(request.body) ? request.body : {}, db.getRegisteredService(id)), id); await syncPrometheusTargets(db); return { service: saved }; }
+    catch (error) { return reply.code(400).send({ error: error instanceof Error ? error.message : 'Invalid service configuration' }); }
+  });
+  app.delete('/api/services/:id', { preHandler: requireAdmin }, async (request, reply) => {
+    const id = String((request.params as { id: string }).id);
+    try {
+      const existing = db.getRegisteredService(id);
+      if (!existing) return reply.code(404).send({ error: 'Service not found' });
+      const legacyEndpointIds = db.deleteMonitoredEndpointsForService(existing);
+      const deleted = db.deleteRegisteredService(id);
+      if (!deleted) return reply.code(404).send({ error: 'Service not found' });
+      // Both discovery and retained historical series must be removed. These
+      // are best-effort so an unavailable metrics server cannot undo the
+      // successful configuration unregister.
+      try { await syncPrometheusTargets(db); } catch { /* configuration removal succeeded */ }
+      try { await purgePrometheusServiceSeries(existing, legacyEndpointIds); } catch { /* Prometheus will be retried by its retention lifecycle */ }
+      return { deleted: true, unregistered: true, metricsPurged: true };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : 'Unable to unregister service' });
+    }
+  });
+  app.get('/api/recovery/queue', { preHandler: requireAdmin }, async () => ({ queue: db.listRecoveryQueue() }));
+
   app.get('/api/events/stream', async (request, reply) => {
     if (authEnabled && (!tokenFromRequest(request) || !safeEqual(tokenFromRequest(request) as string, adminToken))) {
       return reply.code(401).send({ error: 'Authentication required' });
@@ -804,6 +908,34 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     }
   });
   app.get('/api/test-service/status', { preHandler: requireAdmin }, async () => readTestServiceStatus());
+  app.get('/api/kubernetes/registered-services/status', { preHandler: requireAdmin }, async (_request, reply) => {
+    const services = db.listRegisteredServices();
+    const controller = process.env.RECOVERY_CONTROLLER_URL ?? 'http://recovery-controller:8090';
+    const token = process.env.RECOVERY_CONTROLLER_TOKEN ?? '';
+    let containers: Array<{ id?: string; name?: string; service?: string; state?: string; status?: string }> = [];
+    try {
+      const response = await fetch(`${controller}/v1/containers`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
+      if (response.ok) containers = ((await response.json()) as { containers?: typeof containers }).containers ?? [];
+    } catch { /* API health is still useful when Docker discovery is temporarily unavailable. */ }
+    const statuses = await Promise.all(services.map(async (service) => {
+      const endpoint = service.endpoints.find((candidate) => candidate.enabled);
+      let api: 'REACHABLE' | 'UNREACHABLE' | 'UNKNOWN' = 'UNKNOWN';
+      let statusCode: number | null = null;
+      let error: string | null = null;
+      if (endpoint) {
+        try {
+          const response = await fetch(endpoint.url, { signal: AbortSignal.timeout(service.timeoutSeconds * 1000), cache: 'no-store' });
+          statusCode = response.status;
+          api = response.status === endpoint.expectedStatus ? 'REACHABLE' : 'UNREACHABLE';
+        } catch (reason) { api = 'UNREACHABLE'; error = reason instanceof Error ? reason.message : 'Health check failed'; }
+      }
+      const container = containers.find((candidate) => candidate.id === service.containerId || candidate.name === service.containerName || candidate.service === service.name);
+      const queue = db.listRecoveryQueue().filter((job) => job.serviceId === service.id);
+      const latestJob = queue[0];
+      return { serviceId: service.id, service: service.name, container: service.containerName ?? container?.name ?? 'NOT CONFIGURED', containerState: container?.state?.toUpperCase() ?? (service.containerId ? 'UNAVAILABLE' : 'NOT CONFIGURED'), api, statusCode, endpoint: endpoint?.url ?? null, error, monitoringEnabled: service.monitoringEnabled, autoRecoveryEnabled: service.autoRecoveryEnabled, authorizedRecovery: Boolean(service.containerId && service.containerName), recoveryStatus: latestJob?.status ?? null, responsibleAgent: latestJob?.agentId ?? null };
+    }));
+    return reply.send({ services: statuses, checkedAt: new Date().toISOString() });
+  });
   app.get('/api/kubernetes/agent/config', async (request, reply) => {
     const policy = db.getKubernetesAgentPolicy();
     const agentProbeHost = process.env.KUBERNETES_AGENT_PROBE_HOST?.trim();
@@ -816,7 +948,8 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
         return url.toString();
       } catch { return value; }
     };
-    const endpoints = db.listMonitoredEndpoints().filter((endpoint) => endpoint.enabled).map((endpoint) => ({ id: endpoint.id, applicationName: endpoint.applicationName, probeUrl: resolveProbeUrl(endpoint), method: endpoint.method, expectedStatus: endpoint.expectedStatus, intervalSeconds: endpoint.intervalSeconds }));
+    const services = db.listRegisteredServices();
+    const endpoints = services.flatMap((service) => service.monitoringEnabled ? service.endpoints.filter((endpoint) => endpoint.enabled).map((endpoint) => ({ id: endpoint.id, serviceId: service.id, applicationName: service.name, probeUrl: endpoint.url, method: 'GET' as const, expectedStatus: endpoint.expectedStatus, intervalSeconds: service.intervalSeconds, timeoutSeconds: service.timeoutSeconds, failureThreshold: service.failureThreshold, cooldownSeconds: service.cooldownSeconds, maxAttempts: service.maxAttempts, autoRecoveryEnabled: service.autoRecoveryEnabled, recoveryAction: service.recoveryAction, priority: service.priority })) : []);
     return {
       agentId: String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'),
       mode: recoveryMode.currentMode(),
@@ -893,18 +1026,26 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
       return reply.code(502).send({ error: error instanceof Error ? error.message : 'Kubernetes topology inspection failed' });
     } finally { transitionLocks.delete(lockKey); }
   });
-  app.post('/api/kubernetes/failure-test/stop-service', { preHandler: requireAdmin, config: { rateLimit: { max: 3, timeWindow: '10 minutes' } } }, async (_request, reply) => {
+  app.post('/api/kubernetes/failure-test/stop-service', { preHandler: requireAdmin, config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (request, reply) => {
     if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery must be the active mode' });
-    const service = process.env.RECOVERY_ALLOWED_SERVICE?.trim();
-    if (!service) return reply.code(503).send({ error: 'No development Test Service is explicitly allowlisted for outage testing' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const requestedService = typeof body.serviceId === 'string' ? body.serviceId.trim() : typeof body.service === 'string' ? body.service.trim() : '';
+    const configured = db.listRegisteredServices().filter((service) => service.monitoringEnabled && service.autoRecoveryEnabled && service.containerId && service.containerName);
+    const services = requestedService ? configured.filter((service) => service.id === requestedService || service.name === requestedService) : configured;
+    if (requestedService && !services.length) return reply.code(404).send({ error: 'Registered service was not found or is not authorized for outage testing' });
+    if (!services.length) return reply.code(503).send({ error: 'No monitored registered services with authorized automatic recovery targets are configured' });
     if (!db.getKubernetesAgentPolicy().enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
     const lockKey = 'kubernetes-failure-test-stop-service';
     if (transitionLocks.has(lockKey)) return reply.code(409).send({ error: 'A Test Service outage request is already in progress' });
     transitionLocks.add(lockKey);
     try {
-      const result = await controlContainer('STOP_CONTAINER', service, 15000);
-      events?.publish('operation', { source: 'failure-testing-lab', action: 'STOP_TEST_SERVICE', service, result });
-      return { status: 'stopped', service, targetContainer: service, result };
+      const results = [];
+      for (const service of services) {
+        const result = await controlContainer('STOP_CONTAINER', service.name, 15000, { containerId: service.containerId, containerName: service.containerName });
+        results.push({ service: service.name, targetContainer: service.containerName, result });
+        events?.publish('operation', { source: 'failure-testing-lab', action: 'STOP_REGISTERED_SERVICE', service: service.name, result });
+      }
+      return { status: 'stopped', services: results, message: 'Registered services stopped. Agents will detect failures and the recovery queue will process them sequentially.' };
     } catch (error) { return reply.code(502).send({ error: error instanceof Error ? error.message : 'Test Service stop failed' }); }
     finally { transitionLocks.delete(lockKey); }
   });
@@ -982,7 +1123,7 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
       });
       return { status: 'accepted', deduplicated: true, sourceOfTruth: 'prometheus' };
     }
-    if (incidentId && body.eventType === 'incident.created') db.createKubernetesIncident(incidentId, Number(body.monitorId), typeof body.service === 'string' ? body.service : 'test-service', typeof body.error === 'string' ? body.error : 'Health check failed', body.metadata);
+    if (incidentId && body.eventType === 'incident.created') db.createKubernetesIncident(incidentId, typeof body.monitorId === 'string' || typeof body.monitorId === 'number' ? body.monitorId : 'unknown', typeof body.service === 'string' ? body.service : 'test-service', typeof body.error === 'string' ? body.error : 'Health check failed', { ...(isRecord(body.metadata) ? body.metadata : {}), endpointId: body.monitorId, agentId });
     if (incidentId && body.eventType === 'incident.resolved') db.updateKubernetesIncident(incidentId, { status: 'RECOVERED', recoveredAt: new Date().toISOString() });
     db.recordKubernetesAgentEvent(agentId, eventType, body, incidentId);
     events?.publish('operation', { source: 'kubernetes-agent', eventType, incidentId, service: body.service });
@@ -995,12 +1136,11 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     const incidentId = typeof body?.incidentId === 'string' ? body.incidentId.trim() : '';
     const ttlSeconds = Number(body?.ttlSeconds ?? 120);
     if (!agentId || !service || !incidentId || !Number.isInteger(ttlSeconds) || ttlSeconds < 10 || ttlSeconds > 900) return reply.code(400).send({ error: 'Invalid recovery lease request' });
-    const allowedService = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
-    if (service !== allowedService && service !== 'Test Service' && service !== 'localhost') return reply.code(403).send({ error: 'Recovery lease target is not allowlisted' });
-    const normalizedService = allowedService;
+    const registered = db.listRegisteredServices().find((candidate) => candidate.id === service || candidate.name === service || (service === 'Test Service' && candidate.name === 'test-service'));
+    if (!registered) return reply.code(403).send({ error: 'Recovery lease target is not registered' });
+    const normalizedService = registered.id;
     if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery is not the active recovery mode' });
-    const policy = db.getKubernetesAgentPolicy();
-    if (!policy.enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
+    if (!registered.autoRecoveryEnabled || !registered.containerId || !registered.containerName) return reply.code(409).send({ error: 'Automatic recovery is disabled or has no authorized container mapping' });
     const lease = db.acquireKubernetesAgentLease(normalizedService, incidentId, agentId, ttlSeconds);
     db.recordKubernetesAgentEvent(agentId, lease.acquired ? 'recovery.ownership_acquired' : 'recovery.ownership_contended', { service: normalizedService, incidentId, ownerAgentId: lease.ownerAgentId, expiresAt: lease.expiresAt }, incidentId);
     return lease.acquired ? lease : reply.code(409).send(lease);
@@ -1009,51 +1149,23 @@ export function buildAlertManagerApp(options: { db: AlertDatabase; adminToken: s
     const body = request.body as Record<string, unknown>;
     const requestedService = typeof body?.service === 'string' ? body.service.trim() : '';
     const incidentId = typeof body?.incidentId === 'string' ? body.incidentId.trim() : '';
-    const monitorId = Number(body?.monitorId);
+    const monitorId = typeof body?.monitorId === 'string' || typeof body?.monitorId === 'number' ? body.monitorId : '';
     const agentId = typeof body?.agentId === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(body.agentId) ? body.agentId : '';
     const leaseToken = typeof body?.leaseToken === 'string' ? body.leaseToken.trim() : '';
     const action = body?.action === 'START_CONTAINER' || body?.action === 'RESTART_CONTAINER' ? body.action as 'START_CONTAINER' | 'RESTART_CONTAINER' : null;
-    const allowedService = process.env.RECOVERY_ALLOWED_SERVICE?.trim() || 'test-service';
-    const service = requestedService === allowedService || requestedService === 'Test Service' || requestedService === 'localhost' ? allowedService : '';
-    if (!service || !incidentId || !Number.isInteger(monitorId) || !action) return reply.code(400).send({ error: 'Invalid recovery request' });
+    const registered = db.listRegisteredServices().find((candidate) => candidate.id === requestedService || candidate.name === requestedService || (requestedService === 'Test Service' && candidate.name === 'test-service'));
+    if (!registered || !incidentId || !monitorId || !action) return reply.code(400).send({ error: 'Invalid recovery request' });
     if (!recoveryMode.isActive('KUBERNETES')) return reply.code(409).send({ error: 'Kubernetes Recovery is not the active recovery mode' });
-    const policy = db.getKubernetesAgentPolicy();
-    if (!policy.enabled) return reply.code(409).send({ error: 'Kubernetes Agent automatic recovery is disabled' });
-    if (!agentId || !leaseToken || !db.validateKubernetesAgentLease(service, incidentId, agentId, leaseToken)) return reply.code(409).send({ error: 'Recovery ownership is missing, expired, or held by another Agent' });
-    const runbook = db.listRunbooks().find((candidate) => candidate.enabled && candidate.mode === 'AUTOMATIC' && candidate.service === service);
-    if (!runbook) return reply.code(409).send({ error: 'No enabled automatic runbook is configured for this recovery target' });
-    if (kubernetesRecoveryLocks.has(service) || db.activeRecoveryForService(service)) return reply.code(409).send({ error: 'A recovery attempt is already running for this service' });
+    if (!registered.autoRecoveryEnabled || !registered.containerId || !registered.containerName) return reply.code(409).send({ error: 'Automatic recovery is disabled or has no authorized container mapping' });
+    if (!agentId || !leaseToken || !db.validateKubernetesAgentLease(registered.id, incidentId, agentId, leaseToken)) return reply.code(409).send({ error: 'Recovery ownership is missing, expired, or held by another Agent' });
     const incident = db.getKubernetesIncident(incidentId);
     if (incident?.status === 'RECOVERED') return reply.code(409).send({ error: 'Incident is already recovered' });
-    kubernetesRecoveryLocks.add(service);
-    const attemptId = crypto.randomUUID();
-    db.createKubernetesAttempt(attemptId, incidentId);
-    db.updateKubernetesIncident(incidentId, { status: 'RECOVERING', recoveryAttempts: Number(incident?.recovery_attempts ?? 0) + 1 });
-    try {
-      events?.publish('recovery', { source: 'kubernetes-agent', incidentId, attemptId, status: 'RECOVERY_REQUESTED', service, action });
-      const result = await controlContainer(action, service, Number(runbook.timeoutSeconds) * 1000);
-      let healthyChecks = 0;
-      const verificationDeadline = Date.now() + Number(runbook.timeoutSeconds) * 1000;
-      while (Date.now() < verificationDeadline) {
-        if (await verifyService(runbook, 5000)) healthyChecks += 1; else healthyChecks = 0;
-        if (healthyChecks >= 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      if (healthyChecks < 2) throw new Error('Recovery command completed but API health verification did not pass');
-      db.finishKubernetesAttempt(attemptId, 'SUCCEEDED', undefined, { ...result, verified: true });
-      db.updateKubernetesIncident(incidentId, { status: 'RECOVERED', recoveredAt: new Date().toISOString() });
-      db.recordKubernetesAgentEvent(String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'), 'recovery.succeeded', { incidentId, attemptId, result, verified: true }, incidentId);
-      return { status: 'accepted', attemptId, result, verified: true };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Recovery executor failed';
-      db.finishKubernetesAttempt(attemptId, 'FAILED', message);
-      db.updateKubernetesIncident(incidentId, { status: 'FAILED', error: message });
-      db.recordKubernetesAgentEvent(String(request.headers['x-sentinelops-agent-id'] ?? 'kubernetes-agent'), 'recovery.failed', { incidentId, attemptId, error: message }, incidentId);
-      return reply.code(502).send({ error: message, attemptId });
-    } finally {
-      kubernetesRecoveryLocks.delete(service);
-      db.releaseKubernetesAgentLease(service, incidentId, agentId, leaseToken);
-    }
+    const job = db.enqueueRecovery(registered, incidentId, agentId);
+    db.updateKubernetesIncident(incidentId, { status: 'QUEUED', recoveryAttempts: Number(incident?.recovery_attempts ?? 0) + 1 });
+    db.recordKubernetesAgentEvent(agentId, 'recovery.queued', { incidentId, jobId: job.id, serviceId: registered.id, service: registered.name, action }, incidentId);
+    db.releaseKubernetesAgentLease(registered.id, incidentId, agentId, leaseToken);
+    events?.publish('recovery', { source: 'kubernetes-agent', incidentId, jobId: job.id, status: 'QUEUED', service: registered.name, agentId, action });
+    return reply.code(202).send({ status: 'queued', job });
   });
   app.get('/api/kubernetes/commands', { preHandler: requireAdmin }, async () => ({ operations: kubernetesCommands.list() }));
   app.get('/api/kubernetes/commands/:id', { preHandler: requireAdmin }, async (request, reply) => {

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 
-type Target = { id: number; applicationName: string; probeUrl: string; method: 'GET' | 'HEAD'; expectedStatus: number; intervalSeconds: number };
+type Target = { id: string|number; serviceId?: string; applicationName: string; probeUrl: string; method: 'GET' | 'HEAD'; expectedStatus: number; intervalSeconds: number; timeoutSeconds?: number; failureThreshold?: number; cooldownSeconds?: number; maxAttempts?: number; autoRecoveryEnabled?: boolean; recoveryAction?: 'START_CONTAINER'|'RESTART_CONTAINER'; priority?: string };
 type Policy = { enabled: boolean; intervalSeconds: number; timeoutSeconds: number; failureThreshold: number; cooldownSeconds: number; maxAttempts: number };
 type TrafficConfig = { prometheusUrl: string; requestMetric: string; intervalSeconds: number; source: string };
 type Config = { agentId: string; mode: 'MANUAL' | 'KUBERNETES'; policy: Policy; endpoints: Target[]; traffic?: TrafficConfig };
@@ -12,7 +12,7 @@ const agentId = process.env.SENTINELOPS_AGENT_ID ?? `agent-${crypto.randomUUID()
 const podName = process.env.POD_NAME;
 const namespace = process.env.POD_NAMESPACE ?? 'sentinelops';
 const nodeName = process.env.POD_NODE_NAME;
-const states = new Map<number, State>();
+const states = new Map<string, State>();
 // Several registered endpoints can belong to the same recoverable service. They
 // must not start concurrent recovery requests from one Agent process.
 const recoveryInFlight = new Set<string>();
@@ -21,7 +21,7 @@ let lastConfig: Config | undefined;
 let trafficTimer: NodeJS.Timeout | undefined;
 let lastHealthCheckAt: string | undefined;
 
-const recoveryService = (target: Target): string => target.applicationName === 'Test Service' || target.applicationName === 'localhost' ? 'test-service' : target.applicationName;
+const recoveryService = (target: Target): string => target.serviceId ?? (target.applicationName === 'Test Service' || target.applicationName === 'localhost' ? 'test-service' : target.applicationName);
 
 async function fetchBounded(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
@@ -67,7 +67,7 @@ async function heartbeat(): Promise<void> {
 async function check(target: Target, policy: Policy): Promise<{ healthy: boolean; status?: number; latencyMs?: number; error?: string }> {
   const started = Date.now();
   try {
-    const response = await fetchBounded(target.probeUrl, { method: target.method, redirect: 'error' }, policy.timeoutSeconds * 1000);
+    const response = await fetchBounded(target.probeUrl, { method: target.method, redirect: 'error' }, (target.timeoutSeconds ?? policy.timeoutSeconds) * 1000);
     return { healthy: response.status >= 200 && response.status < 300 && response.status === target.expectedStatus, status: response.status, latencyMs: Date.now() - started, error: response.ok ? undefined : `HTTP ${response.status}` };
   } catch (error) {
     return { healthy: false, latencyMs: Date.now() - started, error: error instanceof Error ? error.message : 'Health check failed' };
@@ -76,7 +76,8 @@ async function check(target: Target, policy: Policy): Promise<{ healthy: boolean
 
 async function monitorTarget(target: Target, current: Config): Promise<void> {
   const policy = current.policy;
-  const state = states.get(target.id) ?? { failures: 0, attempts: 0 };
+  const stateKey = String(target.id);
+  const state = states.get(stateKey) ?? { failures: 0, attempts: 0 };
   const result = await check(target, policy);
   if (result.healthy) {
     if (state.failures > 0) await sendEvent('api.healthy', target, state, { statusCode: result.status, latencyMs: result.latencyMs });
@@ -86,28 +87,35 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
       state.incidentId = undefined;
       state.attempts = 0;
     }
-    states.set(target.id, state);
+    states.set(stateKey, state);
     return;
   }
   state.failures += 1;
-  await sendEvent(state.failures >= policy.failureThreshold ? 'api.unhealthy' : 'api.degraded', target, state, { statusCode: result.status, latencyMs: result.latencyMs, error: result.error });
-  if (state.failures < policy.failureThreshold) { states.set(target.id, state); return; }
+  // A confirmed unreachable endpoint is actionable immediately. The recovery
+  // queue still provides global concurrency, authorization, ownership, and
+  // deduplication; Agents must not wait through several polling intervals
+  // before submitting the first recovery request.
+  const failureThreshold = 1;
+  await sendEvent('api.unhealthy', target, state, { statusCode: result.status, latencyMs: result.latencyMs, error: result.error });
+  if (state.failures < failureThreshold) { states.set(stateKey, state); return; }
   if (!state.incidentId) {
     state.incidentId = `${agentId}-${target.id}-${Date.now()}`;
-    console.warn(JSON.stringify({ event: 'agent.threshold_reached', agentId, monitorId: target.id, failureCount: state.failures, threshold: policy.failureThreshold }));
+    console.warn(JSON.stringify({ event: 'agent.threshold_reached', agentId, monitorId: target.id, failureCount: state.failures, threshold: failureThreshold }));
     await sendEvent('incident.created', target, state, { error: result.error, failureCount: state.failures }, true);
   }
   const now = Date.now();
   const cooled = !state.lastRecoveryAt || now - state.lastRecoveryAt >= policy.cooldownSeconds * 1000;
-  if (current.mode !== 'KUBERNETES' || !policy.enabled || state.attempts >= policy.maxAttempts || !cooled) {
+  const maxAttempts = target.maxAttempts ?? policy.maxAttempts;
+  const autoRecoveryEnabled = target.autoRecoveryEnabled ?? policy.enabled;
+  if (current.mode !== 'KUBERNETES' || !autoRecoveryEnabled || state.attempts >= maxAttempts || !cooled) {
     console.warn(JSON.stringify({ event: 'agent.recovery_skipped', monitorId: target.id, mode: current.mode, enabled: policy.enabled, attempts: state.attempts, maxAttempts: policy.maxAttempts, cooled }));
-    states.set(target.id, state); return;
+    states.set(stateKey, state); return;
   }
   state.attempts += 1;
   state.lastRecoveryAt = now;
   const service = recoveryService(target);
   if (recoveryInFlight.has(service)) {
-    states.set(target.id, state);
+    states.set(stateKey, state);
     return;
   }
   recoveryInFlight.add(service);
@@ -116,7 +124,7 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
     if (!ownership.ok) {
       console.warn(JSON.stringify({ event: 'agent.recovery_skipped', monitorId: target.id, reason: 'recovery_ownership_contended', status: ownership.status }));
       state.attempts -= 1;
-      states.set(target.id, state);
+      states.set(stateKey, state);
       return;
     }
     const lease = await ownership.json() as { leaseToken?: string; acquired?: boolean };
@@ -125,12 +133,12 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
   } catch (error) {
     await sendEvent('recovery.skipped', target, state, { reason: 'ownership_unavailable', error: error instanceof Error ? error.message : String(error) });
     state.attempts -= 1;
-    states.set(target.id, state);
+    states.set(stateKey, state);
     return;
   }
   await sendEvent('recovery.requested', target, state, { attempt: state.attempts, error: result.error });
   try {
-    const response = await request('/api/kubernetes/agent/recovery', { method: 'POST', body: JSON.stringify({ agentId, incidentId: state.incidentId, monitorId: target.id, service, leaseToken: state.leaseToken, action: 'START_CONTAINER' }) });
+    const response = await request('/api/kubernetes/agent/recovery', { method: 'POST', body: JSON.stringify({ agentId, incidentId: state.incidentId, monitorId: target.id, service, leaseToken: state.leaseToken, action: target.recoveryAction ?? 'RESTART_CONTAINER' }) });
     if (!response.ok) throw new Error(`Backend rejected recovery (${response.status}): ${(await response.text()).slice(0, 500)}`);
     console.log(JSON.stringify({ event: 'agent.recovery_accepted', monitorId: target.id, attempt: state.attempts }));
     await sendEvent('recovery.started', target, state, { attempt: state.attempts });
@@ -140,7 +148,7 @@ async function monitorTarget(target: Target, current: Config): Promise<void> {
     recoveryInFlight.delete(service);
   }
   state.leaseToken = undefined;
-  states.set(target.id, state);
+  states.set(stateKey, state);
 }
 
 async function trafficMonitor(config: Config): Promise<void> {
